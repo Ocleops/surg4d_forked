@@ -219,7 +219,7 @@ def bhattacharyya_coefficient(mu1, Sigma1, mu2, Sigma2):
     DB = term1 + term2
     return np.exp(-DB)  # Bhattacharyya coefficient
 
-def cluster_clip_features(gaussians: GaussianModel, clusters: np.ndarray, scene: Scene, args: argparse.Namespace):
+def cluster_clip_features(gaussians: GaussianModel, clusters: np.ndarray, args: argparse.Namespace):
     # init ae
     ae = Autoencoder(
         encoder_hidden_dims=[256, 128, 64, 32, 3],
@@ -229,13 +229,23 @@ def cluster_clip_features(gaussians: GaussianModel, clusters: np.ndarray, scene:
     ae.load_state_dict(torch.load(args.autoencoder_ckpt_path, map_location='cuda'))
     ae.eval() 
 
-    # get mean latent lfs
+    # get average language feature weighted by opacity
+    weighted_cluster_lfs = []
     n_nodes = len(np.unique(clusters)) - 1
-    lfs_centroids = torch.stack([gaussians.get_language_feature[clusters == i].mean(dim=0) for i in range(n_nodes)])
+    opacities = gaussians.get_opacity
+    lfs = gaussians.get_language_feature
+    for cluster_id in range(n_nodes):
+        cluster_mask = torch.tensor(clusters == cluster_id).to("cuda")
+        cluster_opacities = opacities[cluster_mask]
+        cluster_lfs = lfs[cluster_mask]
+        cluster_lf = (cluster_lfs * cluster_opacities).sum(0) / cluster_opacities.sum()
+        weighted_cluster_lfs.append(cluster_lf)
+    
+    lfs_weighted_centroids = torch.stack(weighted_cluster_lfs)
 
     # decode lfs
     with torch.no_grad():
-        decoded_lfs = ae.decode(lfs_centroids)
+        decoded_lfs = ae.decode(lfs_weighted_centroids)
 
     return decoded_lfs.detach().cpu().numpy()
 
@@ -417,6 +427,7 @@ def main():
     np.save(out / "cluster_clip_features.npy", clip_features)
     np.save(out / "cluster_ids.npy", clusters)
     np.save(out / "cluster_centroids_per_timestep.npy", cluster_pos_through_time)
+    np.save(out / "adjacency_matrices_per_timestep.npy", graphs)
 
 if __name__ == "__main__":
     main()

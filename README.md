@@ -1,5 +1,32 @@
 # 4D LangSplatSurgery: 4D Language Gaussian Splatting via Multimodal Large Language Models on Surgery Data
 
+## How to run on CholecSeg8k
+### 1. Preprocess CholecSeg8k for Colmap
+One cholecseg video sequence can be found in
+```
+data/cholecseg8k/video18/video18_00979
+```
+where 18 is the video number and `00979` is the ID of one subsequence.
+You want to run
+```bash
+python preprocess/crop_black_borders.py --input_dir=data/cholecseg8k/video18/video18_00979
+```
+which crops the black camera borders, removes `_endo` from the filenames, and sorts the files into 3 newly created subdirectories:
+```
+data/cholecseg8k/video18/video18_00979
+├── frames_cropped
+├── segmentation_masks_cropped
+└── watershed_masks_cropped
+```
+
+### 2. Running Colmap
+```bash
+python preprocess/run_nerfstudio_colmap_cpu.py \
+--frames_dir data/cholecseg8k/video18/video18_00979/frames_cropped \ 
+--out_dir data/cholecseg8k/video18/video18_00979/nerfstudio_colmap \
+--colmap_bin /home/tumai/miniconda3/envs/4DSplat/bin/colmap
+```
+
 ## Setup
 4D LangSplat uses the following software versions:
 - Python 3.10

@@ -55,13 +55,13 @@ def run_colmap_cpu(colmap_bin: str, images_dir: Path, colmap_root: Path, logs_di
         # more stable on CPU/headless
         "--SiftExtraction.estimate_affine_shape", "0",
         "--SiftExtraction.domain_size_pooling", "0",
-        "--SiftExtraction.num_threads", "1",
+        "--SiftExtraction.num_threads", "7",
     ]
     match_cmd = [
         colmap_bin, "exhaustive_matcher",
         "--database_path", str(db),
         "--SiftMatching.use_gpu", "0",
-        "--SiftMatching.num_threads", "1",
+        "--SiftMatching.num_threads", "7",
     ]
     mapper_cmd = [
         colmap_bin, "mapper",
@@ -73,6 +73,10 @@ def run_colmap_cpu(colmap_bin: str, images_dir: Path, colmap_root: Path, logs_di
     run_cmd(feat_cmd, logs_dir / "feature_extractor.log")
     run_cmd(match_cmd, logs_dir / "exhaustive_matcher.log")
     run_cmd(mapper_cmd, logs_dir / "mapper.log")
+    # print(" ".join(feat_cmd))
+    # print(" ".join(match_cmd))
+    # print(" ".join(mapper_cmd))
+    exit(0)
 
 
 def main():

@@ -133,21 +133,35 @@ def compute_text_similarities(
 ) -> None:
     try:
         import torch
-        import open_clip
+        import surgvlp
     except Exception as e:
-        print("ERROR: requires open-clip-torch and torch installed", file=sys.stderr)
+        print("ERROR: requires SurgVLP and torch installed", file=sys.stderr)
         raise
 
+    from mmengine.config import Config
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model, _, _ = open_clip.create_model_and_transforms(
-        model_name, pretrained=pretrained, precision="fp16"
-    )
-    model = model.eval().to(device)
-    tokenizer = open_clip.get_tokenizer(model_name)
+    configs = Config.fromfile('../SurgVLP/tests/config_surgvlp.py')['config']
+    # Change the config file to load different models: config_surgvlp.py / config_hecvl.py / config_peskavlp.py
+
+    model, preprocess = surgvlp.load(configs.model_config, device=device)
+
+    model.eval()
+    tokenizer = surgvlp.tokenize
+    model = model.to(device)
+    # model, _, _ = open_clip.create_model_and_transforms(
+    #     model_name, pretrained=pretrained, precision="fp16"
+    # )
+    # model = model.eval().to(device)
+    # tokenizer = open_clip.get_tokenizer(model_name)
 
     with torch.no_grad():
-        tok = torch.cat([tokenizer(p) for p in prompts]).to(device)
-        text = model.encode_text(tok)
+        tok_phrases = [tokenizer(phrase, device=device) for phrase in prompts]
+        text = torch.cat(
+            [model(None, tok_phrase, mode='text')['text_emb'] for tok_phrase in tok_phrases]
+        ).to("cuda")
+        # text = torch.cat([tokenizer(p) for p in prompts]).to(device)
+        # text = model.encode_text(tok)
         text = text / text.norm(dim=-1, keepdim=True)
         T = text.float().cpu().numpy()  # (P,512)
 

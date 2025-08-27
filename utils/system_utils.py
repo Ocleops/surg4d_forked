@@ -24,5 +24,17 @@ def mkdir_p(folder_path):
             raise
 
 def searchForMaxIteration(folder,stage):
-    saved_iters = [int(fname.split("_")[-1]) for fname in os.listdir(folder) if stage == fname.split('_')[0]]
+    if not os.path.isdir(folder):
+        raise FileNotFoundError(f"Iteration folder not found: {folder}")
+    saved_iters = []
+    for fname in os.listdir(folder):
+        # Expect names like f"{stage}_iteration_<N>"
+        parts = fname.split("_")
+        if len(parts) >= 3 and parts[0] == stage and parts[1] == "iteration":
+            try:
+                saved_iters.append(int(parts[2]))
+            except ValueError:
+                continue
+    if not saved_iters:
+        raise FileNotFoundError(f"No iterations found in {folder} for stage '{stage}'")
     return max(saved_iters)

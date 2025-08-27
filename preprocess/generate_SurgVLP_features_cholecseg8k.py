@@ -15,30 +15,34 @@ from copy import deepcopy
 
 import torch
 import torchvision
+from torchvision import transforms
+from torchvision.transforms.functional import to_pil_image
 from torch import nn
 
 try:
-    import open_clip
+    import surgvlp
 except ImportError:
     assert False, (
-        "open_clip is not installed, install it with `pip install open-clip-torch`"
+        "SurgVLP is not installed, install it with `pip install git+https://github.com/CAMMA-public/SurgVLP.git`"
     )
+
+from mmengine.config import Config
 
 # from loguru import logger
 
 
 @dataclass
-class OpenCLIPNetworkConfig:
-    _target: Type = field(default_factory=lambda: OpenCLIPNetwork)
+class SurgVLPNetworkConfig:
+    _target: Type = field(default_factory=lambda: SurgVLPNetwork)
     clip_model_type: str = "ViT-B-16"
     clip_model_pretrained: str = "laion2b_s34b_b88k"
-    clip_n_dims: int = 512
+    SurgVLP_n_dims: int = 768 #512
     negatives: Tuple[str] = ("object", "things", "stuff", "texture")
     positives: Tuple[str] = ("",)
 
 
-class OpenCLIPNetwork(nn.Module):
-    def __init__(self, config: OpenCLIPNetworkConfig):
+class SurgVLPNetwork(nn.Module):
+    def __init__(self, config: SurgVLPNetworkConfig):
         super().__init__()
         self.config = config
         self.process = torchvision.transforms.Compose(
@@ -50,34 +54,47 @@ class OpenCLIPNetwork(nn.Module):
                 ),
             ]
         )
-        model, _, _ = open_clip.create_model_and_transforms(
-            self.config.clip_model_type,  # e.g., ViT-B-16
-            pretrained=self.config.clip_model_pretrained,  # e.g., laion2b_s34b_b88k
-            precision="fp16",
-        )
-        model.eval()
-        self.tokenizer = open_clip.get_tokenizer(self.config.clip_model_type)
-        self.model = model.to("cuda")
-        self.clip_n_dims = self.config.clip_n_dims
 
-        self.positives = self.config.positives
+        configs = Config.fromfile('../SurgVLP/tests/config_surgvlp.py')['config']
+        # Change the config file to load different models: config_surgvlp.py / config_hecvl.py / config_peskavlp.py
+
+        model, self.preprocess = surgvlp.load(configs.model_config, device="cuda")
+
+        model.eval()
+        self.tokenizer = surgvlp.tokenize
+        self.model = model.to("cuda")
+        self.SurgVLP_n_dims = self.config.SurgVLP_n_dims
+
+        self.positives = self.config.positives    
         self.negatives = self.config.negatives
+
         with torch.no_grad():
-            tok_phrases = torch.cat(
-                [self.tokenizer(phrase) for phrase in self.positives]
+            tok_phrases = [self.tokenizer(phrase, device="cuda") for phrase in self.positives]
+            self.pos_embeds = torch.cat(
+                [model(None, tok_phrase, mode='text')['text_emb'] for tok_phrase in tok_phrases]
             ).to("cuda")
-            self.pos_embeds = model.encode_text(tok_phrases)
-            tok_phrases = torch.cat(
-                [self.tokenizer(phrase) for phrase in self.negatives]
+
+            tok_phrases = [self.tokenizer(phrase, device="cuda") for phrase in self.negatives]
+            self.neg_embeds = torch.cat(
+                [model(None, tok_phrase, mode='text')['text_emb'] for tok_phrase in tok_phrases]
             ).to("cuda")
-            self.neg_embeds = model.encode_text(tok_phrases)
+            # tok_phrases = torch.cat(
+            #     [self.tokenizer(phrase)['input_ids'] for phrase in self.positives]
+            # ).to("cuda")
+            # self.pos_embeds = model(None, tok_phrases, mode='text')
+            # # self.pos_embeds = model.encode_text(tok_phrases)
+            # tok_phrases = torch.cat(
+            #     [self.tokenizer(phrase)['input_ids'] for phrase in self.negatives]
+            # ).to("cuda")
+            # self.neg_embeds = model(None, tok_phrases, mode='text')
+            # self.neg_embeds = model.encode_text(tok_phrases)
         self.pos_embeds /= self.pos_embeds.norm(dim=-1, keepdim=True)
         self.neg_embeds /= self.neg_embeds.norm(dim=-1, keepdim=True)
 
         assert self.pos_embeds.shape[1] == self.neg_embeds.shape[1], (
             "Positive and negative embeddings must have the same dimensionality"
         )
-        assert self.pos_embeds.shape[1] == self.clip_n_dims, (
+        assert self.pos_embeds.shape[1] == self.SurgVLP_n_dims, (
             "Embedding dimensionality must match the model dimensionality"
         )
 
@@ -89,8 +106,8 @@ class OpenCLIPNetwork(nn.Module):
 
     @property
     def embedding_dim(self) -> int:
-        return self.config.clip_n_dims
-
+        return self.config.SurgVLP_n_dims
+    
     def gui_cb(self, element):
         self.set_positives(element.value.split(";"))
 
@@ -100,12 +117,13 @@ class OpenCLIPNetwork(nn.Module):
             tok_phrases = torch.cat(
                 [self.tokenizer(phrase) for phrase in self.positives]
             ).to("cuda")
-            self.pos_embeds = self.model.encode_text(tok_phrases)
+            self.pos_embeds = model(None, tok_phrases, mode='text')
+            # self.pos_embeds = self.model.encode_text(tok_phrases)
         self.pos_embeds /= self.pos_embeds.norm(dim=-1, keepdim=True)
 
     def get_relevancy(self, embed: torch.Tensor, positive_id: int) -> torch.Tensor:
         phrases_embeds = torch.cat([self.pos_embeds, self.neg_embeds], dim=0)
-        p = phrases_embeds.to(embed.dtype)  # phrases x 512
+        p = phrases_embeds.to(embed.dtype)  # phrases x 768
         output = torch.mm(embed, p.T)  # rays x phrases
         positive_vals = output[..., positive_id : positive_id + 1]  # rays x 1
         negative_vals = output[..., len(self.positives) :]  # rays x N_phrase
@@ -121,44 +139,67 @@ class OpenCLIPNetwork(nn.Module):
         )[:, 0, :]
 
     def encode_image(self, input):
-        processed_input = self.process(input).half()
-        return self.model.encode_image(processed_input)
+        imgs = [to_pil_image(xi.cpu().clamp(0, 1)) for xi in input]  # list of PIL.Image
+        processed_list = [self.preprocess(img) for img in imgs]   # each -> (C,H,W) tensor
+        processed_input = torch.stack(processed_list, dim=0).to("cuda")
+        # img = transforms.ToPILImage()(input.detach().cpu())
+        # processed_input = self.preprocess(img).unsqueeze(0).to("cuda")
+
+        with torch.no_grad():
+            image_embeddings = self.model(processed_input, None, mode='video')['img_emb']
+        
+        return image_embeddings
 
 
-def create(image_list, data_list, save_folder, precompute_seg_path=None):
+def create(
+    image_list,
+    data_list,
+    save_folder,
+    precompute_seg_path=None,
+    levels="default",
+    precompute_seg_paths_per_frame=None,
+):
     assert image_list is not None, "image_list must be provided to generate features"
-    embed_size = 512
+    embed_size = 768 # 512
+    modes = [m.strip() for m in levels.split(",") if m.strip()]
     seg_maps = []
     total_lengths = []
     timer = 0
     img_embeds = torch.zeros((len(image_list), 300, embed_size))
-    if precompute_seg_path is not None:
-        seg_maps = torch.zeros((len(image_list), 4, *image_list[0].shape[1:]))
+    if precompute_seg_paths_per_frame is not None:
+        seg_maps = torch.zeros((len(image_list), len(modes), *image_list[0].shape[1:]))
+        pre_compute_seg_list = precompute_seg_paths_per_frame
+    elif precompute_seg_path is not None:
+        seg_maps = torch.zeros((len(image_list), len(modes), *image_list[0].shape[1:]))
         pre_compute_seg_list = os.listdir(precompute_seg_path)
         pre_compute_seg_list.sort()
+        pre_compute_seg_list = [
+            os.path.join(precompute_seg_path, p) for p in pre_compute_seg_list
+        ]
     else:
-        seg_maps = torch.zeros((len(image_list), 4, *image_list[0].shape[1:]))
+        seg_maps = torch.zeros((len(image_list), len(modes), *image_list[0].shape[1:]))
     # mask_generator.predictor.model.to('cuda')
     for i, img in tqdm(enumerate(image_list), desc="Embedding images", leave=False):
         timer += 1
-        if precompute_seg_path is not None:
-            seg_path = os.path.join(precompute_seg_path, pre_compute_seg_list[i])
+        if precompute_seg_paths_per_frame is not None:
+            seg_path = pre_compute_seg_list[i]
+        elif precompute_seg_path is not None:
+            seg_path = pre_compute_seg_list[i]
         else:
             seg_path = None
-        try:
-            img_embed, seg_map = _embed_clip_sam_tiles(
-                img.unsqueeze(0), sam_encoder, seg_path
-            )
-        except:
-            import ipdb
-
-            ipdb.set_trace()
-            raise ValueError(timer)
+        # try:
+        img_embed, seg_map = _embed_vlp_sam_tiles(
+            img.unsqueeze(0), sam_encoder, seg_path, modes=modes
+        )
+        # except Exception as e:
+        #     raise RuntimeError(
+        #         f"CLIP/SAM tiling failed at index {i} with seg_path={seg_path}: {e}"
+        #     ) from e
 
         lengths = [len(v) for k, v in img_embed.items()]
         total_length = sum(lengths)
         total_lengths.append(total_length)
-
+        
         if total_length > img_embeds.shape[1]:
             pad = total_length - img_embeds.shape[1]
             img_embeds = torch.cat(
@@ -168,7 +209,7 @@ def create(image_list, data_list, save_folder, precompute_seg_path=None):
         img_embed = torch.cat([v for k, v in img_embed.items()], dim=0)
         assert img_embed.shape[0] == total_length
         img_embeds[i, :total_length] = img_embed
-
+        
         seg_map_tensor = []
         lengths_cumsum = lengths.copy()
         for j in range(1, len(lengths)):
@@ -186,7 +227,7 @@ def create(image_list, data_list, save_folder, precompute_seg_path=None):
         seg_maps[i] = seg_map
 
     # mask_generator.predictor.model.to('cpu')
-
+        
     for i in range(img_embeds.shape[0]):
         save_path = os.path.join(save_folder, data_list[i].split(".")[0])
         assert total_lengths[i] == int(seg_maps[i].max() + 1)
@@ -201,29 +242,20 @@ def sava_numpy(save_path, data):
     np.save(save_path_f, data["feature"].numpy())
 
 
-def _embed_clip_sam_tiles(image, sam_encoder, precomp_seg_path=None):
+def _embed_vlp_sam_tiles(image, sam_encoder, precomp_seg_path=None, modes=None):
     aug_imgs = torch.cat([image])
-    seg_images, seg_map = sam_encoder(aug_imgs, precomp_seg_path)
+    seg_images, seg_map = sam_encoder(aug_imgs, precomp_seg_path, modes=modes)
 
     clip_embeds = {}
-    # if precomp_seg_path:
-    #     mode = 'video'
-    #     tiles = seg_images[mode]
-    #     tiles = tiles.to("cuda")
-    #     # import ipdb; ipdb.set_trace()
-    #     with torch.no_grad():
-    #         clip_embed = model.encode_image(tiles)
-    #     clip_embed /= clip_embed.norm(dim=-1, keepdim=True)
-    #     clip_embeds[mode] = clip_embed.detach().cpu().half()
-    # else:
-    for mode in ["default", "s", "m", "l"]:
+    modes = modes or ["default", "s", "m", "l"]
+    for mode in modes:
         tiles = seg_images[mode]
         tiles = tiles.to("cuda")
         with torch.no_grad():
-            clip_embed = model.encode_image(tiles)
+            clip_embed = GLOBAL_CLIP_MODEL.encode_image(tiles)
         clip_embed /= clip_embed.norm(dim=-1, keepdim=True)
         clip_embeds[mode] = clip_embed.detach().cpu().half()
-
+    
     return clip_embeds, seg_map
 
 
@@ -258,7 +290,7 @@ def filter(keep: torch.Tensor, masks_result) -> None:
 def mask_nms(masks, scores, iou_thr=0.7, score_thr=0.1, inner_thr=0.2, **kwargs):
     """
     Perform mask non-maximum suppression (NMS) on a set of masks based on their scores.
-
+    
     Args:
         masks (torch.Tensor): has shape (num_masks, H, W)
         scores (torch.Tensor): The scores of the masks, has shape (num_masks,)
@@ -272,7 +304,7 @@ def mask_nms(masks, scores, iou_thr=0.7, score_thr=0.1, inner_thr=0.2, **kwargs)
 
     scores, idx = scores.sort(0, descending=True)
     num_masks = idx.shape[0]
-
+    
     masks_ord = masks[idx.view(-1), :]
     masks_area = torch.sum(masks_ord, dim=(1, 2), dtype=torch.float)
 
@@ -314,12 +346,12 @@ def mask_nms(masks, scores, iou_thr=0.7, score_thr=0.1, inner_thr=0.2, **kwargs)
     inner_iou_max_u, _ = inner_iou_matrix_u.max(dim=0)
     inner_iou_matrix_l = torch.tril(inner_iou_matrix, diagonal=1)
     inner_iou_max_l, _ = inner_iou_matrix_l.max(dim=0)
-
+    
     keep = iou_max <= iou_thr
     keep_conf = scores > score_thr
     keep_inner_u = inner_iou_max_u <= 1 - inner_thr
     keep_inner_l = inner_iou_max_l <= 1 - inner_thr
-
+    
     # If there are no masks with scores above threshold, the top 3 masks are selected
     if keep_conf.sum() == 0:
         index = scores.topk(3).indices
@@ -360,7 +392,7 @@ def masks_update(*args, **kwargs):
     return masks_new
 
 
-def sam_encoder(image, precomp_seg_path=None):
+def sam_encoder(image, precomp_seg_path=None, modes=None):
     image = cv2.cvtColor(
         image[0].permute(1, 2, 0).numpy().astype(np.uint8), cv2.COLOR_BGR2RGB
     )
@@ -369,44 +401,51 @@ def sam_encoder(image, precomp_seg_path=None):
     assert precomp_seg_path is not None, (
         "precomp_seg_path must be provided to generate features"
     )
-    mask_video_np = np.load(precomp_seg_path)
-    mask_all = []
-    # import ipdb; ipdb.set_trace()
-    for i in range(4):
+    mask_np = np.load(precomp_seg_path)
+    modes = modes or ["default", "s", "m", "l"]
+
+    mask_all_named = []
+    # Accept either a stacked (4,H,W) array or a single (H,W) array
+    if mask_np.ndim == 3 and mask_np.shape[0] >= 1:
+        level_idx = {"default": 0, "s": 1, "m": 2, "l": 3}
+        for name in modes:
+            idx = level_idx[name]
+            layer = mask_np[idx]
+            mask_ans = []
+            for j in range(1, int(layer.max()) + 1):
+                positions = np.where(layer == j)
+                if len(positions[0]) == 0:
+                    continue
+                y_min, y_max = positions[0].min(), positions[0].max()
+                x_min, x_max = positions[1].min(), positions[1].max()
+                mask_ans.append(
+                    {
+                        "segmentation": layer == j,
+                        "label": j,
+                        "bbox": [x_min, y_min, x_max - x_min, y_max - y_min],
+                    }
+                )
+            mask_all_named.append((name, mask_ans))
+    else:
+        # Single-level default mask
+        layer = mask_np if mask_np.ndim == 2 else mask_np[0]
         mask_ans = []
-        # import ipdb; ipdb.set_trace()
-        for j in range(1, int(mask_video_np[i].max()) + 1):
-            positions = np.where(mask_video_np[i] == j)
+        for j in range(1, int(layer.max()) + 1):
+            positions = np.where(layer == j)
             if len(positions[0]) == 0:
                 continue
-
-            # 计算边界框的坐标
             y_min, y_max = positions[0].min(), positions[0].max()
             x_min, x_max = positions[1].min(), positions[1].max()
-
-            # 存储边界框信息
             mask_ans.append(
                 {
-                    "segmentation": mask_video_np[i] == j,
+                    "segmentation": layer == j,
                     "label": j,
                     "bbox": [x_min, y_min, x_max - x_min, y_max - y_min],
                 }
             )
-        mask_all.append(mask_ans)
-    masks_default, masks_s, masks_m, masks_l = (
-        mask_all[0],
-        mask_all[1],
-        mask_all[2],
-        mask_all[3],
-    )
-
-    # else:
-    #     # pre-compute masks
-    #     masks_default, masks_s, masks_m, masks_l = mask_generator.generate(image)
-    #     # pre-compute postprocess
-    #     masks_default, masks_s, masks_m, masks_l = \
-    #         masks_update(masks_default, masks_s, masks_m, masks_l, iou_thr=0.8, score_thr=0.7, inner_thr=0.5)
-
+        # Only provide 'default'
+        mask_all_named = [("default", mask_ans)]
+    
     def mask2segmap(masks, image):
         seg_img_list = []
         seg_map = -np.ones(image.shape[:2], dtype=np.int32)
@@ -417,7 +456,7 @@ def sam_encoder(image, precomp_seg_path=None):
         masks = filter_masks
         for i in range(len(masks)):
             mask = masks[i]
-
+            
             seg_img = get_seg_img(mask, image)
             ans = pad_img(seg_img)
             # if len(ans) == 0:
@@ -435,19 +474,10 @@ def sam_encoder(image, precomp_seg_path=None):
         return seg_imgs, seg_map
 
     seg_images, seg_maps = {}, {}
-    # import ipdb; ipdb.set_trace()
-    # if precomp_seg_path is not None:
-    #     seg_images['video'], seg_maps['video'] = mask2segmap(mask_video, image)
-    # else:
-    seg_images["default"], seg_maps["default"] = mask2segmap(masks_default, image)
-    if len(masks_s) != 0:
-        seg_images["s"], seg_maps["s"] = mask2segmap(masks_s, image)
-    if len(masks_m) != 0:
-        seg_images["m"], seg_maps["m"] = mask2segmap(masks_m, image)
-    if len(masks_l) != 0:
-        seg_images["l"], seg_maps["l"] = mask2segmap(masks_l, image)
-
-    # 0:default 1:s 2:m 3:l
+    for name, masks in mask_all_named:
+        if len(masks) == 0:
+            continue
+        seg_images[name], seg_maps[name] = mask2segmap(masks, image)
     return seg_images, seg_maps
 
 
@@ -456,8 +486,8 @@ def seed_everything(seed_value):
     np.random.seed(seed_value)
     torch.manual_seed(seed_value)
     os.environ["PYTHONHASHSEED"] = str(seed_value)
-
-    if torch.cuda.is_available():
+    
+    if torch.cuda.is_available(): 
         torch.cuda.manual_seed(seed_value)
         torch.cuda.manual_seed_all(seed_value)
         torch.backends.cudnn.deterministic = True
@@ -469,9 +499,11 @@ if __name__ == "__main__":
     seed_everything(seed_num)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_path", type=str, required=True)
+    parser.add_argument("--dataset_path", type=str, required=False)
     parser.add_argument(
-        "--dataset_type", choices=["hypernerf", "dynerf"], default="hypernerf"
+        "--dataset_type",
+        choices=["hypernerf", "dynerf", "cholecseg8k"],
+        default="cholecseg8k",
     )
     parser.add_argument("--resolution", type=int, default=-1)
     parser.add_argument(
@@ -484,11 +516,42 @@ if __name__ == "__main__":
         help="path to the segmentation computed by other models (e.g. video tracker)",
     )
     parser.add_argument("--output_name", type=str, default="language_features_video")
+    parser.add_argument(
+        "--levels",
+        type=str,
+        default="default",
+        help="comma-separated levels to use: default,s,m,l",
+    )
+    # cholecseg8k specifics
+    parser.add_argument(
+        "--frames_dir",
+        type=str,
+        default="/home/tumai/team1/Ken/4DLangSplatSurgery/data/cholecseg8k/video01/video01_14939_firstry",
+    )
+    parser.add_argument(
+        "--masks_dir",
+        type=str,
+        default="/home/tumai/team1/Ken/4DLangSplatSurgery/submodules/4d-langsplat-tracking-anything-with-deva/scripts/output/default/origin_mask_default",
+    )
+    parser.add_argument(
+        "--frame_mask_offset",
+        type=int,
+        default=14938,
+        help="mask_index = frame_index - offset; first mask 000001 corresponds to frame index offset+1",
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default=None,
+        help="output dir for features; default is frames_dir/../language_features_video",
+    )
     args = parser.parse_args()
     torch.set_default_dtype(torch.float32)
 
     dataset_path = args.dataset_path
     sam_ckpt_path = args.sam_ckpt_path
+    # Instantiate and expose a global CLIP model instance for embedding
+    GLOBAL_CLIP_MODEL = SurgVLPNetwork(SurgVLPNetworkConfig)
     # import time
     # timestamp = time.strftime("%Y%m%d_%H%M%S")
     # log_file_name = f"log_{timestamp}.log"
@@ -513,7 +576,7 @@ if __name__ == "__main__":
             data_list = os.listdir(img_folder)
             data_list.sort()
 
-            model = OpenCLIPNetwork(OpenCLIPNetworkConfig)
+            model = SurgVLPNetwork(SurgVLPNetworkConfig)
             # sam = sam_model_registry["vit_h"](checkpoint=sam_ckpt_path).to('cuda')
             # mask_generator = SamAutomaticMaskGenerator(
             #     model=sam,
@@ -546,10 +609,10 @@ if __name__ == "__main__":
                         global_down = 1
                 else:
                     global_down = orig_w / args.resolution
-
+                    
                 scale = float(global_down)
                 resolution = (int(orig_w / scale), int(orig_h / scale))
-
+                
                 image = cv2.resize(image, resolution)
                 image = torch.from_numpy(image)
                 img_list.append(image)
@@ -558,7 +621,7 @@ if __name__ == "__main__":
             ]
             imgs = torch.cat(images)
 
-            create(imgs, data_list, save_folder, args.precompute_seg)
+            create(imgs, data_list, save_folder, args.precompute_seg, args.levels)
     elif args.dataset_type == "dynerf":
         cam_dirs = [
             d
@@ -584,7 +647,7 @@ if __name__ == "__main__":
             data_list = os.listdir(img_folder)
             data_list.sort()
 
-            model = OpenCLIPNetwork(OpenCLIPNetworkConfig)
+            model = SurgVLPNetwork(SurgVLPNetworkConfig)
             # sam = sam_model_registry["vit_h"](checkpoint=sam_ckpt_path).to('cuda')
             # mask_generator = SamAutomaticMaskGenerator(
             #     model=sam,
@@ -617,10 +680,10 @@ if __name__ == "__main__":
                         global_down = 1
                 else:
                     global_down = orig_w / args.resolution
-
+                    
                 scale = float(global_down)
                 resolution = (int(orig_w / scale), int(orig_h / scale))
-
+                
                 image = cv2.resize(image, resolution)
                 image = torch.from_numpy(image)
                 img_list.append(image)
@@ -634,6 +697,82 @@ if __name__ == "__main__":
                 data_list,
                 save_folder,
                 os.path.join(args.precompute_seg, cam_dir, "concat_npy"),
+                args.levels,
             )
+    elif args.dataset_type == "cholecseg8k":
+        # Frames are given directly; masks are ground truths in default level only; 1-based masks with offset
+        frames_dir = args.frames_dir
+        masks_dir = args.masks_dir
+        offset = args.frame_mask_offset
+
+        assert os.path.isdir(frames_dir), f"frames_dir not found: {frames_dir}"
+        assert os.path.isdir(masks_dir), f"masks_dir not found: {masks_dir}"
+
+        # Collect frames; typical pattern frame_XXXX_endo.png
+        data_list = sorted(
+            [
+                f
+                for f in os.listdir(frames_dir)
+                if f.lower().endswith((".png", ".jpg", ".jpeg"))
+            ]
+        )
+        img_list = []
+        seg_paths = []
+
+        # Build per-frame seg path using offset
+        for fname in data_list:
+            image_path = os.path.join(frames_dir, fname)
+            image = cv2.imread(image_path)
+            if image is None:
+                raise RuntimeError(f"Failed to read image: {image_path}")
+
+            # Optional resize logic similar to above
+            orig_w, orig_h = image.shape[1], image.shape[0]
+            if args.resolution == -1:
+                global_down = orig_h / 1080 if orig_h > 1080 else 1
+            else:
+                global_down = orig_w / args.resolution
+            scale = float(global_down)
+            resolution = (int(orig_w / scale), int(orig_h / scale))
+            image = cv2.resize(image, resolution)
+            image = torch.from_numpy(image)
+            img_list.append(image)
+
+            # Parse frame index from name (expects ..._<index>_...)
+            import re
+
+            m = re.search(r"(\d+)", fname)
+            if not m:
+                raise ValueError(f"Cannot extract numeric frame index from {fname}")
+            frame_idx = int(m.group(1))
+            mask_idx = frame_idx - offset
+            if mask_idx < 1:
+                raise ValueError(
+                    f"Computed mask_idx < 1 for frame {fname} with offset {offset}"
+                )
+            seg_name = f"{mask_idx:06}.npy"
+            seg_path = os.path.join(masks_dir, seg_name)
+            if not os.path.isfile(seg_path):
+                raise FileNotFoundError(f"Mask not found for frame {fname}: {seg_path}")
+            seg_paths.append(seg_path)
+
+        images = [img_list[i].permute(2, 0, 1)[None, ...] for i in range(len(img_list))]
+        imgs = torch.cat(images)
+
+        # Decide output
+        save_folder = args.output_dir or os.path.join(
+            os.path.dirname(frames_dir), args.output_name
+        )
+        os.makedirs(save_folder, exist_ok=True)
+
+        # Only default by default
+        create(
+            imgs,
+            data_list,
+            save_folder,
+            None,
+            args.levels,
+            precompute_seg_paths_per_frame=seg_paths,
+        )
     else:
         raise NotImplementedError

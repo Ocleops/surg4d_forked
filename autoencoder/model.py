@@ -23,7 +23,7 @@ class Autoencoder(nn.Module):
                 decoder_layers.append(nn.ReLU())
                 decoder_layers.append(nn.Linear(decoder_hidden_dims[i-1], decoder_hidden_dims[i]))
         self.decoder = nn.ModuleList(decoder_layers)
-        print(self.encoder, self.decoder)
+        # print(self.encoder, self.decoder)
     def forward(self, x):
         for m in self.encoder:
             x = m(x)
