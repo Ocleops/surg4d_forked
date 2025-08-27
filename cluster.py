@@ -401,7 +401,7 @@ def main():
 
     # cluster features
     timesteps = np.linspace(0, 1, 20) 
-    clip_features = cluster_clip_features(gaussians, clusters, scene, args)
+    clip_features = cluster_clip_features(gaussians, clusters, args)
     pos_through_time = np.stack([positions_at_timestep(gaussians, t, scene) for t in timesteps])
     cluster_pos_through_time = timestep_cluster_means(pos_through_time, clusters)
 
