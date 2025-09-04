@@ -24,7 +24,6 @@ def log_cluster_pointcloud_through_time(
         cluster_correspondences: Cluster correspondences of shape (C, n_queries).
     """
     cluster_ids = np.unique(clusters)
-    cluster_ids = cluster_ids[cluster_ids != -1]
 
     cols = gaussians._features_dc.detach().cpu().numpy() * 255
 
@@ -61,7 +60,8 @@ def log_graph_structure_through_time(
     cluster_pos_through_time: np.ndarray,
     graphs_through_time: np.ndarray,
 ):
-    """Log graph edges over time to Rerun using cluster mean positions.
+    """Log graph edges to rerun.
+    Edge thickness is proportional to the weight.
 
     Args:
         cluster_pos_through_time: Cluster mean positions per timestep; shape (T, C, 3).
@@ -75,6 +75,9 @@ def log_graph_structure_through_time(
 
         if A.shape[0] == 0:
             continue
+
+        # Clear previously logged edges for this timestep so stale edges don't persist
+        rr.log("clusters/edges", rr.Clear(recursive=True))
 
         edge_indices = np.where(A > 0)
         if len(edge_indices[0]) == 0:
@@ -100,9 +103,8 @@ def log_graph_structure_through_time(
                 end_pos = cluster_means[v]
                 weight = normalized_weights[idx]
 
-                color_intensity = int(weight * 255)
-                color = [color_intensity, 0, 255 - color_intensity]
-                thickness = 0.04 + weight * 0.16
+                color = [0, 0, 0]
+                thickness = 0.05 + 0.15 * weight
 
                 edge_line = rr.LineStrips3D(
                     strips=[[start_pos, end_pos]],

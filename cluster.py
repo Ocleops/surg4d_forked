@@ -11,6 +11,7 @@ import mmcv
 import rerun as rr
 import random
 
+from eval.openclip_encoder import OpenCLIPNetwork
 from scene.cameras import Camera
 from utils.params_utils import merge_hparams
 from arguments import ModelParams, PipelineParams, ModelHiddenParams
@@ -22,9 +23,8 @@ from autoencoder.model import Autoencoder
 from rerun_utils import (
     log_cluster_pointcloud_through_time,
     log_graph_structure_through_time,
-    log_correspondences_static
+    log_correspondences_static,
 )
-from lerf_utils import relevancy_scores
 
 
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 # Select which frame index to cluster and render
 N_TIMESTEPS = 5  # change this to choose the frame index
 TIMES = np.linspace(0 + 1e-6, 1 - 1e-6, N_TIMESTEPS)
+
 
 def init_params():
     """Setup parameters similar to the train_eval.sh script"""
@@ -67,6 +68,7 @@ def init_params():
 
     return args, model_params, pipeline, hyperparam
 
+
 def filter_gaussians(gaussians: GaussianModel, mask: torch.Tensor):
     """Filter set of gaussians based on a mask.
 
@@ -82,11 +84,14 @@ def filter_gaussians(gaussians: GaussianModel, mask: torch.Tensor):
                 setattr(gaussians, prop, attribute[mask])
                 logger.info(f"Filtered {prop} with shape {attribute.shape}")
 
+
 def normalize_indep_dim(x):
     return (x - x.mean(axis=0)) / x.std(axis=0)
 
+
 def normalize_dep_dim(x):
     return (x - x.mean()) / x.std()
+
 
 def positions_at_timestep(gaussians: GaussianModel, timestep: float, scene: Scene):
     with torch.no_grad():
@@ -98,7 +103,10 @@ def positions_at_timestep(gaussians: GaussianModel, timestep: float, scene: Scen
         lang = gaussians.get_language_feature
         # Ensure time has the same dtype/device as model tensors
         time = torch.full(
-            (means3D.shape[0], 1), float(timestep), device=means3D.device, dtype=means3D.dtype
+            (means3D.shape[0], 1),
+            float(timestep),
+            device=means3D.device,
+            dtype=means3D.dtype,
         )
         means3D_final, _, _, _, _, _, _ = gaussians._deformation(
             means3D, scales, rotations, opacity, shs, lang, time
@@ -118,6 +126,7 @@ def cluster_gaussians(gaussians: GaussianModel, timestep: float, scene: Scene):
     )
 
     return clusters
+
 
 def filter_clusters(clusters, gaussians, scene):
     pos = normalize_indep_dim(positions_at_timestep(gaussians, 0.0, scene))
@@ -150,12 +159,14 @@ def filter_clusters(clusters, gaussians, scene):
             clusters[cluster_mask] = i
             i += 1
 
+
 def set_cluster_colors(gaussians: GaussianModel, clusters: np.ndarray):
     colors = torch.zeros_like(gaussians._features_dc)  # outliers black
-    all_clusters_mask = clusters >= 0
-    cluster_colors, palette = clusters_to_rgb(clusters[all_clusters_mask])
+    cluster_colors, palette = clusters_to_rgb(clusters)
     sh_dc = RGB2SH(cluster_colors)  # (N,3)
-    colors[all_clusters_mask, 0, :] = torch.tensor(sh_dc, device=colors.device, dtype=colors.dtype)
+    colors[:, 0, :] = torch.tensor(
+        sh_dc, device=colors.device, dtype=colors.dtype
+    )
     gaussians._features_dc.data = colors  # constant part becomes cluster color
     gaussians._features_rest.data = torch.zeros_like(
         gaussians._features_rest
@@ -163,7 +174,16 @@ def set_cluster_colors(gaussians: GaussianModel, clusters: np.ndarray):
 
     return palette
 
-def render(cam: Camera, timestep: float, gaussians: GaussianModel, pipe: PipelineParams, scene: Scene, args: argparse.Namespace, dataset: ModelParams):
+
+def render(
+    cam: Camera,
+    timestep: float,
+    gaussians: GaussianModel,
+    pipe: PipelineParams,
+    scene: Scene,
+    args: argparse.Namespace,
+    dataset: ModelParams,
+):
     cam.time = timestep
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -180,12 +200,20 @@ def render(cam: Camera, timestep: float, gaussians: GaussianModel, pipe: Pipelin
     img = torch.clamp(pkg["render"], 0.0, 1.0)
     return img
 
-def render_and_save_all(gaussians: GaussianModel, pipe: PipelineParams, scene: Scene, args: argparse.Namespace, dataset: ModelParams, out: Path):
+
+def render_and_save_all(
+    gaussians: GaussianModel,
+    pipe: PipelineParams,
+    scene: Scene,
+    args: argparse.Namespace,
+    dataset: ModelParams,
+    out: Path,
+):
     save_dir = out / "cluster_renders"
     save_dir.mkdir(parents=True, exist_ok=True)
 
     # pick random views
-    test_cams = scene.getVideoCameras() # test + train
+    test_cams = scene.getVideoCameras()  # test + train
     random_idx = random.sample(range(len(test_cams)), args.num_views)
     cams = [test_cams[i] for i in random_idx]
 
@@ -201,7 +229,6 @@ def render_and_save_all(gaussians: GaussianModel, pipe: PipelineParams, scene: S
             torchvision.utils.save_image(img, cam_dir / f"timestep_{j:02d}.png")
 
 
-        
 def bhattacharyya_coefficient(mu1, Sigma1, mu2, Sigma2):
     mu1, mu2 = np.asarray(mu1), np.asarray(mu2)
     Sigma1, Sigma2 = np.asarray(Sigma1), np.asarray(Sigma2)
@@ -226,6 +253,7 @@ def bhattacharyya_coefficient(mu1, Sigma1, mu2, Sigma2):
     DB = term1 + term2
     return np.exp(-DB)  # Bhattacharyya coefficient
 
+
 def decode_lfs(lfs: torch.Tensor, args: argparse.Namespace) -> np.ndarray:
     BATCH_SIZE = 1024
 
@@ -234,22 +262,26 @@ def decode_lfs(lfs: torch.Tensor, args: argparse.Namespace) -> np.ndarray:
         decoder_hidden_dims=[16, 32, 64, 128, 256, 512],
         feature_dim=512,
     ).to("cuda")
-    ae.load_state_dict(torch.load(args.autoencoder_ckpt_path, map_location='cuda'))
-    ae.eval() 
+    ae.load_state_dict(torch.load(args.autoencoder_ckpt_path, map_location="cuda"))
+    ae.eval()
 
     decoded_lfs = []
     with torch.no_grad():
         for i in range(0, lfs.shape[0], BATCH_SIZE):
-            batch = lfs[i:min(i+BATCH_SIZE, len(lfs))].to("cuda")
+            batch = lfs[i : min(i + BATCH_SIZE, len(lfs))].to("cuda")
             decoded_lfs.append(ae.decode(batch))
     decoded_lfs = [i.detach().cpu().numpy() for i in decoded_lfs]
     decoded_lfs = np.concatenate(decoded_lfs, axis=0)
+    decoded_lfs = decoded_lfs / np.linalg.norm(decoded_lfs, axis=-1, keepdims=True)
     return decoded_lfs
 
-def cluster_clip_features(gaussians: GaussianModel, clusters: np.ndarray, args: argparse.Namespace) -> np.ndarray:
+
+def cluster_clip_features(
+    gaussians: GaussianModel, clusters: np.ndarray, args: argparse.Namespace
+) -> np.ndarray:
     # get average language feature weighted by opacity
     weighted_cluster_lfs = []
-    n_nodes = len(np.unique(clusters)) - 1
+    n_nodes = len(np.unique(clusters))
     opacities = gaussians.get_opacity
     lfs = gaussians.get_language_feature
     for cluster_id in range(n_nodes):
@@ -258,111 +290,76 @@ def cluster_clip_features(gaussians: GaussianModel, clusters: np.ndarray, args: 
         cluster_lfs = lfs[cluster_mask]
         cluster_lf = (cluster_lfs * cluster_opacities).sum(0) / cluster_opacities.sum()
         weighted_cluster_lfs.append(cluster_lf)
-    
+
     lfs_weighted_centroids = torch.stack(weighted_cluster_lfs)
 
     return decode_lfs(lfs_weighted_centroids, args)
 
 
-def timestep_cluster_means(positions_through_time, clusters):
-    """Returns np(timesteps, clusters, 3) cluster mean positions"""
-    cluster_ids = np.unique(clusters)
-    cluster_ids = cluster_ids[cluster_ids != -1]
+def properties_through_time(positions_through_time, clusters):
+    """Compute spatial cluster properties through time.
 
-    means = np.empty((len(positions_through_time), len(cluster_ids), 3))
+    Args:
+        positions_through_time (np.ndarray): Positions through time. (T, N, 3)
+        clusters (np.ndarray): Cluster ids through time. (T, N)
+
+    Returns:
+        np.ndarray: Centroid through time. (T, C, 3)
+        np.ndarray: Center through time. (T, C, 3)
+        np.ndarray: Extent through time. (T, C, 3)
+    """
+    cluster_ids = np.unique(clusters)
+
+    centroid = np.empty((len(positions_through_time), len(cluster_ids), 3))
+    center = np.empty((len(positions_through_time), len(cluster_ids), 3))
+    extent = np.empty((len(positions_through_time), len(cluster_ids), 3))
     for t in range(len(positions_through_time)):
         for i in range(len(cluster_ids)):
-            means[t, i] = positions_through_time[t][clusters == cluster_ids[i]].mean(0)
+            pos = positions_through_time[t][clusters == cluster_ids[i]]
+            centroid[t, i] = pos.mean(0)
+            center[t, i] = (pos.max(0) + pos.min(0)) / 2
+            extent[t, i] = pos.max(0) - pos.min(0)
 
-    return means
-    
+    return centroid, center, extent
+
+
 def timestep_graph(positions, clusters):
-    n_nodes = len(np.unique(clusters)) - 1
+    n_nodes = len(np.unique(clusters))
     means = np.stack([positions[clusters == i].mean(0) for i in range(n_nodes)])
     covs = np.stack([np.cov(positions[clusters == i].T) for i in range(n_nodes)])
 
     distances = np.empty((n_nodes, n_nodes))
     for i in range(n_nodes):
         for j in range(n_nodes):
-            distances[i, j] = bhattacharyya_coefficient(means[i], covs[i], means[j], covs[j])
+            distances[i, j] = bhattacharyya_coefficient(
+                means[i], covs[i], means[j], covs[j]
+            )
 
     A = np.where(distances >= 0.05, distances, 0)
     return A
 
-def cosine_similarities(lfs: np.ndarray, texts: List[str]):
-    """Computes cosine similarities between a set of
-    text prompts and given language features.
+def lerf_relevancies(lfs: np.ndarray, queries: List[str], canonical_corpus: List[str]):
+    """Compute LERF relevance scores for a set of language features.
 
     Args:
-        lfs (np.ndarray): The language features to compute correspondences for. (N, dim_clip)
-        texts (List[str]): The text prompts to compute correspondences for.
+        lfs (np.ndarray): Language features to compute relevance scores for. (n_lfs, dim)
 
     Returns:
-        np.ndarray: The cosine similarities between the text prompts and the language features. (n_texts, N)
+        np.ndarray: Relevance scores for the language features. (n_queries, n_lfs)
     """
-    # load clip model
-    model, _, _ = open_clip.create_model_and_transforms('ViT-B-16', pretrained='laion2b_s34b_b88k')
-    model.to("cuda")
-    model.eval()
-    tokenizer = open_clip.get_tokenizer('ViT-B-16')
+    ocn = OpenCLIPNetwork(device="cuda", canonical_corpus=canonical_corpus)
+    ocn.set_positives(queries)
 
-    # compute normalized text feats
-    with torch.no_grad():
-        tok_phrases = tokenizer(texts).to("cuda")
-        text = model.encode_text(tok_phrases)
-    text_feats = text.float().cpu().numpy()
-    text_feats = text_feats / np.linalg.norm(text_feats, axis=-1, keepdims=True)
+    lfs = torch.tensor(lfs).to("cuda")
 
-    # compute normalized rendered feats
-    rendered_feats = lfs / np.linalg.norm(lfs, axis=-1, keepdims=True)
+    lerf_relevancies = []
+    for i in range(len(queries)):
+        r = ocn.get_relevancy(lfs, i)
+        r = r[:, 0].detach().cpu().numpy()
+        lerf_relevancies.append(r)
+    lerf_relevancies = np.stack(lerf_relevancies) # (n_queries, n_lfs)
 
-    cos_sim = text_feats @ rendered_feats.T
-    return cos_sim
-
-def lerf_relevancy_scores(lfs: np.ndarray, texts: List[str]):
-    """Computes cosine similarities between a set of
-    text prompts and given language features.
-
-    Args:
-        lfs (np.ndarray): The language features to compute correspondences for. (N, dim_clip)
-        texts (List[str]): The text prompts to compute correspondences for.
-
-    Returns:
-        np.ndarray: The cosine similarities between the text prompts and the language features. (n_texts, N)
-    """
-    neutral_corpus = [
-        "object",
-        "things",
-        "stuff",
-        "texture"
-    ]
-
-    # load clip model
-    model, _, _ = open_clip.create_model_and_transforms('ViT-B-16', pretrained='laion2b_s34b_b88k')
-    model.to("cuda")
-    model.eval()
-    tokenizer = open_clip.get_tokenizer('ViT-B-16')
-
-    # compute normalized text feats
-    with torch.no_grad():
-        tok_text = tokenizer(texts).to("cuda")
-        text = model.encode_text(tok_text)
-        tok_neutral = tokenizer(neutral_corpus).to("cuda")
-        neutral = model.encode_text(tok_neutral)
-    text_feats = text.float().cpu().numpy()
-    text_feats = text_feats / np.linalg.norm(text_feats, axis=-1, keepdims=True)
-    neutral_feats = neutral.float().cpu().numpy()
-    neutral_feats = neutral.float().cpu().numpy()
-
-    rendered_feats = lfs / np.linalg.norm(lfs, axis=-1, keepdims=True)
-
-    scores = relevancy_scores(
-        lang=rendered_feats,
-        query=text_feats,
-        canon=neutral_feats
-    )
-
-    return scores
+    return lerf_relevancies
 
 def main():
     # determistic seeds
@@ -390,29 +387,33 @@ def main():
     mask = (gaussians.get_opacity > 0.1).squeeze()
     filter_gaussians(gaussians, mask)
 
-    # cluster and filter
+    # cluster, filter clusters, filter gaussians that are not in a cluster
     clusters = cluster_gaussians(gaussians, timestep=0.0, scene=scene)
     filter_clusters(clusters, gaussians, scene)
+    cluster_mask = clusters >= 0
+    filter_gaussians(gaussians, cluster_mask)
+    clusters = clusters[cluster_mask]
     palette = set_cluster_colors(gaussians, clusters)
 
     # cluster features
-    timesteps = np.linspace(0, 1, 20) 
+    timesteps = np.linspace(0, 1, 20)
     clip_features = cluster_clip_features(gaussians, clusters, args)
-    pos_through_time = np.stack([positions_at_timestep(gaussians, t, scene) for t in timesteps])
-    cluster_pos_through_time = timestep_cluster_means(pos_through_time, clusters)
+    pos_through_time = np.stack(
+        [positions_at_timestep(gaussians, t, scene) for t in timesteps]
+    )
+    cluster_pos_through_time, cluster_center_through_time, cluster_extent_through_time = properties_through_time(pos_through_time, clusters)
 
     # graph
-    graphs = np.stack([timestep_graph(pos_through_time[i], clusters) for i in range(len(timesteps))])
+    graphs = np.stack(
+        [timestep_graph(pos_through_time[i], clusters) for i in range(len(timesteps))]
+    )
 
     # query correspondences
-    QUERIES = [
-        "hand", "egg"
-    ]
     gaussian_lfs = decode_lfs(gaussians.get_language_feature, args)
-    # guassian_cos_sim = cosine_similarities(gaussian_lfs, QUERIES)
-    guassian_lerf_sim = lerf_relevancy_scores(gaussian_lfs, QUERIES)
-    # cluster_cos_sim = cosine_similarities(clip_features, QUERIES)
-    cluster_lerf_sim = lerf_relevancy_scores(clip_features, QUERIES)
+    queries = ["hand", "egg"]
+    canonical_corpus = ["object", "things", "stuff", "texture"]
+    gaussian_scores = lerf_relevancies(gaussian_lfs, queries, canonical_corpus)
+    cluster_scores = lerf_relevancies(clip_features, queries, canonical_corpus)
 
     # render and save everything
     out = Path(args.model_path) / "graph"
@@ -423,21 +424,24 @@ def main():
     np.save(out / "cluster_clip_features.npy", clip_features)
     np.save(out / "cluster_ids.npy", clusters)
     np.save(out / "cluster_centroids_per_timestep.npy", cluster_pos_through_time)
+    np.save(out / "cluster_centers_per_timestep.npy", cluster_center_through_time)
+    np.save(out / "cluster_extents_per_timestep.npy", cluster_extent_through_time)
     np.save(out / "adjacency_matrices_per_timestep.npy", graphs)
 
     # visualize to rerun
     rr.init("clusters")
-    rr.connect_grpc("rerun+http://127.0.0.1:9876/proxy")
-    rr.save(out / "graph_visualization.rrd")
-    rr.log("/", rr.Transform3D(scale=[1, 1, -1]), static=True)
+    # rr.log("/", rr.ViewCoordinates.RDF)
+    rr.connect_grpc("rerun+http://127.0.0.1:9876/proxy") # log to web viewer if running
+    rr.save(out / "graph_visualization.rrd") # save to file for offline viewing
+
     log_cluster_pointcloud_through_time(
         gaussians=gaussians,
         clusters=clusters,
         timesteps=timesteps,
         pos_through_time=pos_through_time,
         cluster_pos_through_time=cluster_pos_through_time,
-        text_queries=QUERIES,
-        cluster_correspondences=cluster_lerf_sim,
+        text_queries=queries,
+        cluster_correspondences=cluster_scores,
     )
     log_graph_structure_through_time(
         cluster_pos_through_time=cluster_pos_through_time,
@@ -446,11 +450,12 @@ def main():
     log_correspondences_static(
         positions=gaussians.get_xyz.detach().cpu().numpy(),
         clusters=clusters,
-        text_queries=QUERIES,
-        correspondences=guassian_lerf_sim,
+        text_queries=queries,
+        correspondences=gaussian_scores,
         corr_min=0.0,
         corr_max=1.0,
     )
+
 
 if __name__ == "__main__":
     main()
