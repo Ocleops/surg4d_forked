@@ -5,6 +5,7 @@ import argparse
 import numpy as np
 import torchvision
 from pathlib import Path
+import copy
 import logging
 import mmcv
 import rerun as rr
@@ -19,10 +20,10 @@ from scene import GaussianModel, Scene
 from gaussian_renderer import render as gs_render
 from utils.sh_utils import RGB2SH
 from autoencoder.model import Autoencoder
+from autoencoder.model_qwen import QwenAutoencoder
 from rerun_utils import (
     log_cluster_pointcloud_through_time,
     log_graph_structure_through_time,
-    log_correspondences_static,
 )
 
 
@@ -57,7 +58,15 @@ def init_params():
     parser.add_argument("--nonpy", type=int, default=0)
     parser.add_argument("--load_stage", type=str, default="fine-lang")
     parser.add_argument("--num_views", type=int, default=5)
-    parser.add_argument("--autoencoder_ckpt_path", type=str, default=None)
+    parser.add_argument("--clip_autoencoder_ckpt_path", type=str, default=None)
+    parser.add_argument("--qwen_autoencoder_ckpt_path", type=str, default=None)
+    # Additional model paths/stages for loading multiple GaussianModels
+    parser.add_argument("--rgb_model_path", type=str, default=None)
+    parser.add_argument("--clip_model_path", type=str, default=None)
+    parser.add_argument("--qwen_model_path", type=str, default=None)
+    parser.add_argument("--rgb_load_stage", type=str, default=None)
+    parser.add_argument("--clip_load_stage", type=str, default=None)
+    parser.add_argument("--qwen_load_stage", type=str, default=None)
 
     # load config file if specified
     args = parser.parse_args()
@@ -66,6 +75,86 @@ def init_params():
         args = merge_hparams(args, config)
 
     return args, model_params, pipeline, hyperparam
+
+
+def load_all_models(
+    args: argparse.Namespace,
+    model_params: ModelParams,
+    pipeline: PipelineParams,
+    hyperparam: ModelHiddenParams,
+):
+    """Load and return three GaussianModels and Scenes: clip, rgb, qwen.
+
+    Returns:
+        Tuple[GaussianModel, Scene, GaussianModel, Scene, GaussianModel, Scene]
+        In order: (clip_gaussians, clip_scene, rgb_gaussians, rgb_scene, qwen_gaussians, qwen_scene)
+    """
+    # Extract base configs
+    _ = model_params.extract(args)
+    hyper = hyperparam.extract(args)
+
+    # Primary (clip) model — preserve current behavior
+    clip_model_path = args.clip_model_path or args.model_path
+    clip_load_stage = args.clip_load_stage or args.load_stage
+
+    args_clip = copy.copy(args)
+    args_clip.model_path = clip_model_path
+    dataset_clip = model_params.extract(args_clip)
+    gaussians_clip = GaussianModel(dataset_clip.sh_degree, hyper)  # type:ignore
+    scene_clip = Scene(
+        dataset_clip,
+        gaussians_clip,
+        load_iteration=args.iteration,
+        shuffle=False,
+        load_stage=clip_load_stage,
+    )
+    logger.info(f"Loaded CLIP model from {clip_model_path} at stage {clip_load_stage}")
+
+    # RGB model
+    rgb_model_path = args.rgb_model_path or args.model_path
+    rgb_load_stage = args.rgb_load_stage or "fine-base"
+
+    try:
+        args_rgb = copy.copy(args)
+        args_rgb.model_path = rgb_model_path
+        dataset_rgb = model_params.extract(args_rgb)
+        gaussians_rgb = GaussianModel(dataset_rgb.sh_degree, hyper)  # type:ignore
+        scene_rgb = Scene(
+            dataset_rgb,
+            gaussians_rgb,
+            load_iteration=args.iteration,
+            shuffle=False,
+            load_stage=rgb_load_stage,
+        )
+        logger.info(f"Loaded RGB model from {rgb_model_path} at stage {rgb_load_stage}")
+    except Exception as e:
+        logger.warning(f"Failed to load RGB model: {e}")
+        gaussians_rgb = None
+        scene_rgb = None
+
+    # Qwen model
+    qwen_model_path = args.qwen_model_path or args.model_path
+    qwen_load_stage = args.qwen_load_stage or "fine-lang"
+
+    try:
+        args_qwen = copy.copy(args)
+        args_qwen.model_path = qwen_model_path
+        dataset_qwen = model_params.extract(args_qwen)
+        gaussians_qwen = GaussianModel(dataset_qwen.sh_degree, hyper)  # type:ignore
+        scene_qwen = Scene(
+            dataset_qwen,
+            gaussians_qwen,
+            load_iteration=args.iteration,
+            shuffle=False,
+            load_stage=qwen_load_stage,
+        )
+        logger.info(f"Loaded Qwen model from {qwen_model_path} at stage {qwen_load_stage}")
+    except Exception as e:
+        logger.warning(f"Failed to load Qwen model: {e}")
+        gaussians_qwen = None
+        scene_qwen = None
+
+    return gaussians_clip, scene_clip, gaussians_rgb, scene_rgb, gaussians_qwen, scene_qwen
 
 
 def filter_gaussians(gaussians: GaussianModel, mask: torch.Tensor):
@@ -95,6 +184,9 @@ def normalize_dep_dim(x):
 def positions_at_timestep(gaussians: GaussianModel, timestep: float, scene: Scene):
     with torch.no_grad():
         means3D = gaussians.get_xyz
+        # Short-circuit if no gaussians remain after filtering
+        if means3D.shape[0] == 0:
+            return means3D.detach().cpu().numpy()
         scales = gaussians._scaling
         rotations = gaussians._rotation
         opacity = gaussians._opacity
@@ -107,6 +199,11 @@ def positions_at_timestep(gaussians: GaussianModel, timestep: float, scene: Scen
             device=means3D.device,
             dtype=means3D.dtype,
         )
+        # Ensure language deformation is disabled for positional query
+        try:
+            gaussians._deformation.deformation_net.args.no_dlang = 1
+        except Exception:
+            pass
         means3D_final, _, _, _, _, _, _ = gaussians._deformation(
             means3D, scales, rotations, opacity, shs, lang, time
         )
@@ -253,7 +350,7 @@ def bhattacharyya_coefficient(mu1, Sigma1, mu2, Sigma2):
     return np.exp(-DB)  # Bhattacharyya coefficient
 
 
-def decode_lfs(lfs: torch.Tensor, args: argparse.Namespace) -> np.ndarray:
+def decode_clip(lfs: torch.Tensor, args: argparse.Namespace) -> np.ndarray:
     BATCH_SIZE = 1024
 
     ae = Autoencoder(
@@ -261,7 +358,7 @@ def decode_lfs(lfs: torch.Tensor, args: argparse.Namespace) -> np.ndarray:
         decoder_hidden_dims=[16, 32, 64, 128, 256, 512],
         feature_dim=512,
     ).to("cuda")
-    ae.load_state_dict(torch.load(args.autoencoder_ckpt_path, map_location="cuda"))
+    ae.load_state_dict(torch.load(args.clip_autoencoder_ckpt_path, map_location="cuda"))
     ae.eval()
 
     decoded_lfs = []
@@ -274,6 +371,24 @@ def decode_lfs(lfs: torch.Tensor, args: argparse.Namespace) -> np.ndarray:
     decoded_lfs = decoded_lfs / np.linalg.norm(decoded_lfs, axis=-1, keepdims=True)
     return decoded_lfs
 
+def decode_qwen(lfs: torch.Tensor, args: argparse.Namespace) -> np.ndarray:
+    BATCH_SIZE = 1024
+
+    ae = QwenAutoencoder(
+        input_dim=3584,
+        latent_dim=3,
+    ).to("cuda")
+    ae.load_state_dict(torch.load(args.qwen_autoencoder_ckpt_path, map_location="cuda"))
+    ae.eval()
+
+    decoded_lfs = []
+    with torch.no_grad():
+        for i in range(0, lfs.shape[0], BATCH_SIZE):
+            batch = lfs[i : min(i + BATCH_SIZE, len(lfs))].to("cuda")
+            decoded_lfs.append(ae.decode(batch))
+    decoded_lfs = [i.detach().cpu().numpy() for i in decoded_lfs]
+    decoded_lfs = np.concatenate(decoded_lfs, axis=0)
+    return decoded_lfs
 
 def cluster_clip_features(
     gaussians: GaussianModel, clusters: np.ndarray, args: argparse.Namespace
@@ -282,7 +397,7 @@ def cluster_clip_features(
     weighted_cluster_lfs = []
     n_nodes = len(np.unique(clusters))
     opacities = gaussians.get_opacity.detach().cpu().numpy()
-    decoded_lfs = decode_lfs(gaussians.get_language_feature, args) # decode before aggregation, works slightly better but not much
+    decoded_lfs = decode_clip(gaussians.get_language_feature, args) # decode before aggregation, works slightly better but not much
     for cluster_id in range(n_nodes):
         cluster_mask = clusters == cluster_id
         cluster_opacities = opacities[cluster_mask]
@@ -294,6 +409,27 @@ def cluster_clip_features(
     lfs_weighted_centroids = np.stack(weighted_cluster_lfs)
 
     return lfs_weighted_centroids
+
+def cluster_qwen_features(qwen_g: GaussianModel, rgb_g: GaussianModel, clusters: np.ndarray, args: argparse.Namespace) -> np.ndarray:
+    """returns list of top cluster lfs (dynamic size)"""
+    n_nodes = len(np.unique(clusters))
+    # opacities = rgb_g.get_opacity.detach().cpu().numpy()
+    lfs = qwen_g.get_language_feature.detach().cpu().numpy()
+    top_cluster_lfs = {}
+    for cluster_id in range(n_nodes):
+        cluster_mask = clusters == cluster_id
+        # cluster_opacities = opacities[cluster_mask]
+        cluster_lfs = lfs[cluster_mask]
+        print("CLUSTER ID", cluster_id)
+        print("size", cluster_lfs.shape[0])
+        lf_cluster_cluster = HDBSCAN(min_cluster_size=10).fit_predict(cluster_lfs)
+        tmp, unique_indices = np.unique(lf_cluster_cluster, return_index=True)
+        unique_indices = unique_indices[1:]
+        print("tmp", tmp)
+        top_cluster_lf = cluster_lfs[unique_indices]
+        top_cluster_lfs[cluster_id] = top_cluster_lf
+    top_cluster_lfs = {k: decode_qwen(torch.tensor(v, dtype=torch.float32), args) for k, v in top_cluster_lfs.items()}
+    return top_cluster_lfs
 
 
 def properties_through_time(positions_through_time, clusters):
@@ -373,33 +509,35 @@ def main():
     # construct all objects
     dataset = model_params.extract(args)
     pipe = pipeline.extract(args)
-    hyper = hyperparam.extract(args)
-    gaussians = GaussianModel(dataset.sh_degree, hyper)  # type:ignore
-    scene = Scene(
-        dataset,
-        gaussians,
-        load_iteration=args.iteration,
-        shuffle=False,
-        load_stage=args.load_stage,
+    _ = hyperparam.extract(args)
+
+    # Use refactored loader to get all models; keep using clip for current behavior
+    clip_g, clip_scene, rgb_g, rgb_scene, qwen_g, qwen_scene = load_all_models(
+        args, model_params, pipeline, hyperparam
     )
 
     # gaussian filtering
-    mask = (gaussians.get_opacity > 0.1).squeeze()
-    filter_gaussians(gaussians, mask)
+    mask = (rgb_g.get_opacity > 0.1).squeeze()
+    filter_gaussians(rgb_g, mask)
+    filter_gaussians(qwen_g, mask)
+    filter_gaussians(clip_g, mask)
 
     # cluster, filter clusters, filter gaussians that are not in a cluster
-    clusters = cluster_gaussians(gaussians, timestep=0.0, scene=scene)
-    filter_clusters(clusters, gaussians, scene)
+    clusters = cluster_gaussians(clip_g, timestep=0.0, scene=clip_scene)
+    filter_clusters(clusters, clip_g, clip_scene)
     cluster_mask = clusters >= 0
-    filter_gaussians(gaussians, cluster_mask)
+    filter_gaussians(rgb_g, cluster_mask)
+    filter_gaussians(qwen_g, cluster_mask)
+    filter_gaussians(clip_g, cluster_mask)
     clusters = clusters[cluster_mask]
-    palette = set_cluster_colors(gaussians, clusters)
+    palette = set_cluster_colors(clip_g, clusters)
 
     # cluster features
     timesteps = np.linspace(0, 1, 20)
-    clip_features = cluster_clip_features(gaussians, clusters, args)
+    # clip_features = cluster_clip_features(gaussians, clusters, args)
+    qwen_features = cluster_qwen_features(qwen_g, rgb_g, clusters, args)
     pos_through_time = np.stack(
-        [positions_at_timestep(gaussians, t, scene) for t in timesteps]
+        [positions_at_timestep(rgb_g, t, rgb_scene) for t in timesteps]
     )
     cluster_pos_through_time, cluster_center_through_time, cluster_extent_through_time = properties_through_time(pos_through_time, clusters)
 
@@ -409,26 +547,28 @@ def main():
     )
 
     # query correspondences
-    gaussian_lfs = decode_lfs(gaussians.get_language_feature, args)
-    # queries = ["hand", "egg"]
-    # canonical_corpus = ["object", "things", "stuff", "texture"]
-    queries = ["gallbladder", "liver"]
-    canonical_corpus = ["object", "things", "stuff", "texture", "surgery", "body", "anatomy", "medical"]
-    gaussian_scores = lerf_relevancies(gaussian_lfs, queries, canonical_corpus)
-    cluster_scores = lerf_relevancies(clip_features, queries, canonical_corpus)
+    # gaussian_lfs = decode_lfs(gaussians.get_language_feature, args)
+    # # queries = ["hand", "egg"]
+    # # canonical_corpus = ["object", "things", "stuff", "texture"]
+    # queries = ["gallbladder", "liver"]
+    # canonical_corpus = ["object", "things", "stuff", "texture", "surgery", "body", "anatomy", "medical"]
+    # gaussian_scores = lerf_relevancies(gaussian_lfs, queries, canonical_corpus)
+    # cluster_scores = lerf_relevancies(clip_features, queries, canonical_corpus)
 
     # render and save everything
-    out = Path(args.model_path) / "graph"
+    out = Path(args.rgb_model_path) / "graph"
     out.mkdir(parents=True, exist_ok=True)
-    render_and_save_all(gaussians, pipe, scene, args, dataset, out)
+    render_and_save_all(clip_g, pipe, clip_scene, args, dataset, out)
     store_palette(palette, out / "cluster_palette.png")
-    gaussians.save_ply(out / "clustered_gaussians.ply")
-    np.save(out / "cluster_clip_features.npy", clip_features)
-    np.save(out / "cluster_ids.npy", clusters)
-    np.save(out / "cluster_centroids_per_timestep.npy", cluster_pos_through_time)
-    np.save(out / "cluster_centers_per_timestep.npy", cluster_center_through_time)
-    np.save(out / "cluster_extents_per_timestep.npy", cluster_extent_through_time)
-    np.save(out / "adjacency_matrices_per_timestep.npy", graphs)
+    for k, v in qwen_features.items():
+        np.save(out / f"cluster_qwen_features_{k}.npy", v)
+    # gaussians.save_ply(out / "clustered_gaussians.ply")
+    # np.save(out / "cluster_clip_features.npy", clip_features)
+    # np.save(out / "cluster_ids.npy", clusters)
+    # np.save(out / "cluster_centroids_per_timestep.npy", cluster_pos_through_time)
+    # np.save(out / "cluster_centers_per_timestep.npy", cluster_center_through_time)
+    # np.save(out / "cluster_extents_per_timestep.npy", cluster_extent_through_time)
+    # np.save(out / "adjacency_matrices_per_timestep.npy", graphs)
 
     # visualize to rerun
     rr.init("clusters")
@@ -437,26 +577,28 @@ def main():
     rr.save(out / "graph_visualization.rrd") # save to file for offline viewing
 
     log_cluster_pointcloud_through_time(
-        gaussians=gaussians,
+        gaussians=clip_g,
         clusters=clusters,
         timesteps=timesteps,
         pos_through_time=pos_through_time,
         cluster_pos_through_time=cluster_pos_through_time,
-        text_queries=queries,
-        cluster_correspondences=cluster_scores,
+        # text_queries=queries,
+        # cluster_correspondences=cluster_scores,
+        text_queries=None,
+        cluster_correspondences=None,
     )
     log_graph_structure_through_time(
         cluster_pos_through_time=cluster_pos_through_time,
         graphs_through_time=graphs,
     )
-    log_correspondences_static(
-        positions=gaussians.get_xyz.detach().cpu().numpy(),
-        clusters=clusters,
-        text_queries=queries,
-        correspondences=gaussian_scores,
-        corr_min=0.0,
-        corr_max=1.0,
-    )
+    # log_correspondences_static(
+    #     positions=gaussians.get_xyz.detach().cpu().numpy(),
+    #     clusters=clusters,
+    #     text_queries=queries,
+    #     correspondences=gaussian_scores,
+    #     corr_min=0.0,
+    #     corr_max=1.0,
+    # )
 
 
 if __name__ == "__main__":
