@@ -3,12 +3,16 @@ import math
 import numpy as np
 from PIL import Image
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
-from typing import Optional, Union
+from typing import Dict, List, Optional, Union, Any
 from types import MethodType
+from functools import lru_cache
+from transformers.utils.quantization_config import BitsAndBytesConfig
 
 from transformers.utils import is_torchdynamo_compiling, TransformersKwargs
 from transformers.cache_utils import Cache
-from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLModelOutputWithPast
+from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
+    Qwen2_5_VLModelOutputWithPast,
+)
 from transformers.processing_utils import Unpack
 
 PATCH_SIZE = 14
@@ -49,21 +53,31 @@ def forward(
         The time interval (in seconds) for each grid along the temporal dimension in the 3D position IDs.
     """
 
-    output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-    output_hidden_states = (
-        output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+    output_attentions = (
+        output_attentions
+        if output_attentions is not None
+        else self.config.output_attentions
     )
-    return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+    output_hidden_states = (
+        output_hidden_states
+        if output_hidden_states is not None
+        else self.config.output_hidden_states
+    )
+    return_dict = (
+        return_dict if return_dict is not None else self.config.use_return_dict
+    )
 
     if inputs_embeds is None:
         inputs_embeds = self.get_input_embeddings()(input_ids)
 
-    if pixel_values is not None:
+    if pixel_values is not None or "custom_patch_features" in kwargs:
         if "custom_patch_features" in kwargs:
-            image_embeds = (kwargs["custom_patch_features"],)
+            image_embeds = kwargs["custom_patch_features"]
         else:
             image_embeds = self.get_image_features(pixel_values, image_grid_thw)
-        image_embeds = torch.cat(image_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
+        image_embeds = torch.cat(image_embeds, dim=0).to(
+            inputs_embeds.device, inputs_embeds.dtype
+        )
         image_mask, _ = self.get_placeholder_mask(
             input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
         )
@@ -71,7 +85,9 @@ def forward(
 
     if pixel_values_videos is not None:
         video_embeds = self.get_video_features(pixel_values_videos, video_grid_thw)
-        video_embeds = torch.cat(video_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
+        video_embeds = torch.cat(video_embeds, dim=0).to(
+            inputs_embeds.device, inputs_embeds.dtype
+        )
         _, video_mask = self.get_placeholder_mask(
             input_ids, inputs_embeds=inputs_embeds, video_features=video_embeds
         )
@@ -90,7 +106,9 @@ def forward(
             (cache_position is not None and cache_position[0] == 0)
             or (past_key_values is None or past_key_values.get_seq_length() == 0)
         )
-        if (prefill_compiled_stage or prefill_noncompiled_stage) or self.rope_deltas is None:
+        if (
+            prefill_compiled_stage or prefill_noncompiled_stage
+        ) or self.rope_deltas is None:
             position_ids, rope_deltas = self.get_rope_index(
                 input_ids,
                 image_grid_thw,
@@ -106,7 +124,9 @@ def forward(
             if cache_position is not None:
                 delta = (cache_position[0] + self.rope_deltas).to(inputs_embeds.device)
             else:
-                delta = torch.zeros((batch_size, seq_length), device=inputs_embeds.device)
+                delta = torch.zeros(
+                    (batch_size, seq_length), device=inputs_embeds.device
+                )
             delta = delta.repeat_interleave(batch_size // delta.shape[0], dim=1)
             position_ids += delta.to(position_ids.device)
 
@@ -142,13 +162,45 @@ def square_crop_image(image: Image.Image, xslide=0, yslide=0):
     )
 
 
-def get_patched_qwen():
-    """get a monkey patched version of Qwen2_5_VLForConditionalGeneration and Qwen2_5_VLProcesso
-    that supports passing in raw patch features
+def get_patched_qwen(
+    use_bnb_4bit: bool = True,
+    use_bnb_8bit: bool = False,
+    attn_implementation: str = "sdpa", # "flash_attention_2" or "sdpa"
+    torch_dtype: torch.dtype = torch.bfloat16,
+    device_map: Union[str, Dict[str, str]] = "auto",
+    max_memory: Optional[Dict[str, str]] = {0: "22.0GB", "cpu": "46.0GB"},
+):
+    """Get a monkey-patched Qwen2_5_VL model/processor that supports raw patch features.
+
+    Parameters allow enabling weight quantization and optimized attention without editing Transformers.
     """
     model_path = "/home/tumai/models/Qwen--Qwen2.5-VL-7B-Instruct"
+
+    quantization_config = None
+    if use_bnb_4bit:
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=torch_dtype,
+        )
+    elif use_bnb_8bit:
+        quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+
+    fp_kwargs: Dict[str, Any] = {
+        "dtype": torch_dtype,
+        "device_map": device_map,
+        "low_cpu_mem_usage": True,
+        "attn_implementation": attn_implementation,
+    }
+    if quantization_config is not None:
+        fp_kwargs["quantization_config"] = quantization_config
+    if max_memory is not None:
+        fp_kwargs["max_memory"] = max_memory
+
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-        model_path, dtype=torch.bfloat16, device_map="auto"
+        model_path,
+        **fp_kwargs,
     )
     model.model.forward = MethodType(forward, model.model)
     # Also patch prepare_inputs_for_generation to accept and forward custom_patch_features through generation
@@ -190,13 +242,24 @@ def get_patched_qwen():
             model_inputs["custom_patch_features"] = custom_patch_features
         return model_inputs
 
-    model.prepare_inputs_for_generation = MethodType(prepare_inputs_for_generation_wrapper, model)
+    model.prepare_inputs_for_generation = MethodType(
+        prepare_inputs_for_generation_wrapper, model
+    )
     processor = Qwen2_5_VLProcessor.from_pretrained(model_path)
+    # Prefer new cache format for memory-efficient caches
+    try:
+        model.generation_config.return_legacy_cache = False
+    except Exception:
+        pass
     model.eval()
     return model, processor
 
 
-def qwen_encode_image(image: Image.Image, model: Qwen2_5_VLForConditionalGeneration, processor: Qwen2_5_VLProcessor):
+def qwen_encode_image(
+    image: Image.Image,
+    model: Qwen2_5_VLForConditionalGeneration,
+    processor: Qwen2_5_VLProcessor,
+):
     image_inputs = processor.image_processor(  # type:ignore
         images=[image], return_tensors="pt"
     )
@@ -245,7 +308,12 @@ def patch_cds(src_image: Image.Image):
 
 
 # This function takes in an RGB image  and a prompt
-def ask_qwen_about_image(image: Image.Image, prompt: str, model: Qwen2_5_VLForConditionalGeneration, processor: Qwen2_5_VLProcessor):
+def ask_qwen_about_image(
+    image: Image.Image,
+    prompt: str,
+    model: Qwen2_5_VLForConditionalGeneration,
+    processor: Qwen2_5_VLProcessor,
+):
     messages = [
         {
             "role": "system",
@@ -256,7 +324,6 @@ def ask_qwen_about_image(image: Image.Image, prompt: str, model: Qwen2_5_VLForCo
                 }
             ],
         },
-        # ---------------------------------------------------------------------------------------
         {
             "role": "user",
             "content": [
@@ -274,7 +341,20 @@ def ask_qwen_about_image(image: Image.Image, prompt: str, model: Qwen2_5_VLForCo
         padding=True,
         return_tensors="pt",
     ).to(model.device)
-    generated_ids = model.generate(**inputs, max_new_tokens=128)
+    generated_ids = model.generate(
+        **inputs,
+        max_new_tokens=128,
+        cache_implementation="quantized",
+        cache_config={
+            "backend": "hqq",
+            "config": model.config.get_text_config(),
+            "nbits": 4,
+            "q_group_size": 64,
+            "residual_length": 128,
+        },
+        return_legacy_cache=False,
+        prefill_chunk_size=4096,
+    )
     generated_ids_trimmed = [
         out_ids[len(in_ids) :]
         for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
@@ -285,6 +365,17 @@ def ask_qwen_about_image(image: Image.Image, prompt: str, model: Qwen2_5_VLForCo
         clean_up_tokenization_spaces=False,
     )
     return output_text[0]
+
+
+@lru_cache(maxsize=1000)
+def closest_factor_pair(n) -> tuple[int, int]:
+    root = int(math.isqrt(n))
+    for a in range(root, 0, -1):
+        if n % a == 0:
+            return a, n // a
+    raise Exception(
+        "the given feature patches don't correspond to a nice rectangular size in pixels"
+    )
 
 
 # This function takes in the **patch features** of an image and a prompt
@@ -305,38 +396,78 @@ def ask_qwen_about_image_features(
             ],
         },
     ]
-    text = processor.apply_chat_template(  # type:ignore
+    return generate_with_vision_features(
+        messages, [image_features], model, processor, 128
+    )
+
+
+def model_inputs(
+    messages: List[Dict[str, Any]],
+    vision_features: List[torch.Tensor],
+    processor: Qwen2_5_VLProcessor,
+):
+    # make sure number of messages and vision feature sets match
+    n_msg_images = sum(
+        1
+        for msg in messages
+        if msg["role"] == "user"
+        for part in msg.get("content", [])
+        if part.get("type") == "image"
+    )
+    assert n_msg_images == len(vision_features), (
+        "number of messages and vision features must match"
+    )
+
+    # create actual text template from messages dict
+    text = processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
 
-    def closest_factor_pair(n) -> tuple[int, int]:
-        root = int(math.isqrt(n))
-        for a in range(root, 0, -1):
-            if n % a == 0:
-                return a, n // a
-        raise Exception(
-            "the given feature patches don't correspond to a nice rectangular size in pixels"
+    # create some mock images so the processor precomputes correct image_grid_thw
+    # (we override actual features in model forward pass)
+    mock_images = []
+    for i in range(len(vision_features)):
+        w, h = closest_factor_pair(vision_features[i].shape[0])
+        mock_img = Image.new(
+            "RGB", (EFFECTIVE_PATCH_SIZE * w, EFFECTIVE_PATCH_SIZE * h), color="red"
         )
+        mock_images.append(mock_img)
 
-    effective_patch_size = PATCH_SIZE * SPATIAL_MERGE
-    pw_dummy, ph_dummy = closest_factor_pair(image_features.shape[0])
     inputs = processor(
         text=[text],
-        images=[
-            Image.new(
-                "RGB",
-                (effective_patch_size * pw_dummy, effective_patch_size * ph_dummy),
-                color="red",
-            )
-        ],
+        images=[mock_images],
         padding=True,
         return_tensors="pt",
-    ).to(model.device)
+    )
+    return inputs
+
+
+def generate_with_vision_features(
+    messages: List[Dict[str, Any]],
+    vision_features: List[torch.Tensor],
+    model: Qwen2_5_VLForConditionalGeneration,
+    processor: Qwen2_5_VLProcessor,
+    max_tokens: int = 128,
+):
+    # preprocess and generate
+    inputs = model_inputs(messages, vision_features, processor).to(model.device)
     generated_ids = model.generate(
         **inputs,
-        max_new_tokens=128,
-        custom_patch_features=image_features,
+        max_new_tokens=max_tokens,
+        custom_patch_features=vision_features,
+        cache_implementation="quantized",
+        cache_config={
+            "backend": "hqq",
+            "config": model.config.get_text_config(),
+            "nbits": 4,
+            "q_group_size": 64,
+            "residual_length": 128,
+        },
+        return_legacy_cache=False,
+        prefill_chunk_size=4096,
     )
+
+    # remove prefix tokens (model input) and decode
     generated_ids_trimmed = [
         out_ids[len(in_ids) :]
         for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
@@ -346,7 +477,143 @@ def ask_qwen_about_image_features(
         skip_special_tokens=True,
         clean_up_tokenization_spaces=False,
     )
-    return output_text[0]
+    response = output_text[0]
+    return response
+
+
+def prompt_with_graph(
+    question: str,
+    node_feats: List[np.ndarray],
+    adjacency_matrices: np.ndarray,
+    node_centers: np.ndarray,
+    node_centroids: np.ndarray,
+    node_extents: np.ndarray,
+    model: Qwen2_5_VLForConditionalGeneration,
+    processor: Qwen2_5_VLProcessor,
+    system_prompt: str = None,
+):
+    assert len(adjacency_matrices) == len(node_centers) == len(node_centroids) == len(node_extents), "timestep mismatch"
+
+    if system_prompt is None:
+        system_prompt = """
+        You are an assistant that answers questions about scene graphs.
+        
+        A scene graph represents a 3D scene through time as
+        a list of graphs, where each graphs corresponds to a
+        timestep.
+        Each graph contains a set of nodes and edges.
+        Each node corresponds to an object present in the scene,
+        and associated properties like its position, extent,
+        etc. at the respective timestep.
+        Edge weights correspond to distances between objects
+        at the respective timestep.
+        Each object is represented by an image of the
+        object.
+        The scene graph as a whole is given as a list of
+        objects followed by a list of graphs.
+
+        You will be given a scene graph and a question by the user.
+        You answer the question ONLY based on the scene graph
+        and context provided by this system prompt.
+
+        You answer with nothing but the response to the question.
+        You keep the response as concise as possible, while
+        answering all aspects the question.
+        """
+
+    object_content = []
+    for i in range(len(node_feats)):
+        object_content.extend([
+            {
+                "type": "text",
+                "text": f'<object id="{i}">',
+            },
+            {
+                "type": "image",
+                "image": None,
+            },
+            {
+                "type": "text",
+                "text": "</object>\n",
+            }
+        ])
+
+    graph_content = []
+    for t in range(len(adjacency_matrices)):
+        A = adjacency_matrices[t]
+        graph_content.append(
+            {
+                "type": "text",
+                "text": f'<spatial-graph t="{t}">\n',
+            }
+        )
+        for n in range(A.shape[0]):
+            graph_content.extend([
+                {
+                    "type": "text",
+                    "text": f'<node id="{n}">\n',
+                },
+                {
+                    "type": "text",
+                    "text": f'<center x="{node_centers[t][n][0]}" y="{node_centers[t][n][1]}" z="{node_centers[t][n][2]}"/>\n',
+                },
+                {
+                    "type": "text",
+                    "text": f'<centroid x="{node_centroids[t][n][0]}" y="{node_centroids[t][n][1]}" z="{node_centroids[t][n][2]}"/>\n',
+                },
+                {
+                    "type": "text",
+                    "text": f'<extent x="{node_extents[t][n][0]}" y="{node_extents[t][n][1]}" z="{node_extents[t][n][2]}"/>\n',
+                },
+                {
+                    "type": "text",
+                    "text": '</node>\n',
+                }
+            ])
+        for n in range(A.shape[0]):
+            for m in range(A.shape[1]):
+                if A[n, m] > 0:
+                    graph_content.append(
+                        {
+                            "type": "text",
+                            "text": f'<edge from="{n}" to="{m}" dist="{A[n, m]}"/>\n',
+                        }
+                    )
+        graph_content.append(
+            {
+                "type": "text",
+                "text": '</spatial-graph>\n',
+            }
+        )
+
+    messages = [
+        {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "<scene-graph>\n"},
+                {"type": "text", "text": "<objects>\n"},
+                *object_content,
+                {"type": "text", "text": "</objects>\n"},
+                {"type": "text", "text": "<spatial-graphs>\n"},
+                *graph_content,
+                {"type": "text", "text": "</spatial-graphs>\n"},
+                {"type": "text", "text": "</scene-graph>\n"},
+                {"type": "text", "text": '<question>'},
+                {"type": "text", "text": question},
+                {"type": "text", "text": "</question>\n"},
+                {"type": "text", "text": "\nYour response:\n"},
+            ],
+        },
+    ]
+
+    return generate_with_vision_features(
+        messages=messages,
+        vision_features=[torch.Tensor(f) for f in node_feats],
+        model=model,
+        processor=processor,
+        max_tokens=128,
+    )
 
 
 def crop_patch_features(patch_feat: torch.Tensor, cw, ch, cx1, cx2, cy1, cy2):
