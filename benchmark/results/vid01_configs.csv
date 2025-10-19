@@ -1,0 +1,71 @@
+video_id,config_id,start_frame,end_frame,num_frames,triplet_ids,num_triplets,triplet_names,instruments,verbs,targets,phase
+1,V01_C0001,0,4,5,7,1,"grasper,grasp,gallbladder",grasper,retract,gallbladder,preparation
+1,V01_C0002,10,107,98,7,1,"grasper,grasp,gallbladder",grasper,retract,gallbladder,preparation
+1,V01_C0003,136,171,36,7,1,"grasper,grasp,gallbladder",grasper,retract,gallbladder,carlot-triangle-dissection
+1,V01_C0004,177,189,13,7,1,"grasper,grasp,gallbladder",grasper,retract,gallbladder,carlot-triangle-dissection
+1,V01_C0005,251,271,21,58,1,"hook,dissect,cystic_duct",hook,retract,cystic_duct,carlot-triangle-dissection
+1,V01_C0006,276,290,15,7,1,"grasper,grasp,gallbladder",grasper,retract,gallbladder,carlot-triangle-dissection
+1,V01_C0007,291,297,7,"7,82",2,"grasper,grasp,gallbladder | irrigator,aspirate,fluid","grasper,irrigator","retract,retract","gallbladder,fluid",carlot-triangle-dissection
+1,V01_C0008,302,311,10,"7,82",2,"grasper,grasp,gallbladder | irrigator,aspirate,fluid","grasper,irrigator","retract,retract","gallbladder,fluid",carlot-triangle-dissection
+1,V01_C0009,328,362,35,"7,23",2,"grasper,grasp,gallbladder | bipolar,coagulate,blood_vessel","grasper,bipolar","retract,retract","gallbladder,cystic_artery",carlot-triangle-dissection
+1,V01_C0010,367,386,20,"7,23",2,"grasper,grasp,gallbladder | bipolar,coagulate,blood_vessel","grasper,bipolar","retract,retract","gallbladder,cystic_artery",carlot-triangle-dissection
+1,V01_C0011,406,414,9,82,1,"irrigator,aspirate,fluid",irrigator,retract,fluid,carlot-triangle-dissection
+1,V01_C0012,415,424,10,"7,82",2,"grasper,grasp,gallbladder | irrigator,aspirate,fluid","grasper,irrigator","retract,retract","gallbladder,fluid",carlot-triangle-dissection
+1,V01_C0013,425,432,8,7,1,"grasper,grasp,gallbladder",grasper,retract,gallbladder,carlot-triangle-dissection
+1,V01_C0014,433,466,34,"7,23",2,"grasper,grasp,gallbladder | bipolar,coagulate,blood_vessel","grasper,bipolar","retract,retract","gallbladder,cystic_artery",carlot-triangle-dissection
+1,V01_C0015,471,475,5,34,1,"bipolar,dissect,cystic_duct",bipolar,retract,cystic_duct,carlot-triangle-dissection
+1,V01_C0016,484,492,9,52,1,"hook,coagulate,liver",hook,retract,cystic_artery,carlot-triangle-dissection
+1,V01_C0017,496,504,9,60,1,"hook,dissect,gallbladder",hook,retract,cystic_duct,carlot-triangle-dissection
+1,V01_C0018,524,529,6,17,1,"grasper,retract,gallbladder",grasper,retract,cystic_plate,carlot-triangle-dissection
+1,V01_C0019,538,551,14,7,1,"grasper,grasp,gallbladder",grasper,retract,gallbladder,carlot-triangle-dissection
+1,V01_C0020,554,558,5,7,1,"grasper,grasp,gallbladder",grasper,retract,gallbladder,carlot-triangle-dissection
+1,V01_C0021,567,580,14,"7,17,60",3,"grasper,grasp,gallbladder | grasper,retract,gallbladder | hook,dissect,gallbladder","grasper,grasper,hook","retract,retract,retract","gallbladder,cystic_plate,cystic_duct",carlot-triangle-dissection
+1,V01_C0022,583,620,38,"7,17,60",3,"grasper,grasp,gallbladder | grasper,retract,gallbladder | hook,dissect,gallbladder","grasper,grasper,hook","retract,retract,retract","gallbladder,cystic_plate,cystic_duct",carlot-triangle-dissection
+1,V01_C0023,621,650,30,60,1,"hook,dissect,gallbladder",hook,retract,cystic_duct,carlot-triangle-dissection
+1,V01_C0024,658,669,12,7,1,"grasper,grasp,gallbladder",grasper,retract,gallbladder,carlot-triangle-dissection
+1,V01_C0025,670,674,5,"7,17",2,"grasper,grasp,gallbladder | grasper,retract,gallbladder","grasper,grasper","retract,retract","gallbladder,cystic_plate",carlot-triangle-dissection
+1,V01_C0026,675,697,23,7,1,"grasper,grasp,gallbladder",grasper,retract,gallbladder,clipping-and-cutting
+1,V01_C0027,698,745,48,"7,79",2,"grasper,grasp,gallbladder | clipper,clip,cystic_duct","grasper,clipper","retract,retract","gallbladder,cystic_pedicle",clipping-and-cutting
+1,V01_C0028,763,770,8,7,1,"grasper,grasp,gallbladder",grasper,retract,gallbladder,clipping-and-cutting
+1,V01_C0029,774,787,14,7,1,"grasper,grasp,gallbladder",grasper,retract,gallbladder,clipping-and-cutting
+1,V01_C0030,815,843,29,"7,79",2,"grasper,grasp,gallbladder | clipper,clip,cystic_duct","grasper,clipper","retract,retract","gallbladder,cystic_pedicle",clipping-and-cutting
+1,V01_C0031,844,859,16,7,1,"grasper,grasp,gallbladder",grasper,retract,gallbladder,clipping-and-cutting
+1,V01_C0032,860,876,17,"7,69",2,"grasper,grasp,gallbladder | scissors,cut,cystic_duct","grasper,scissors","retract,retract","gallbladder,blood_vessel",clipping-and-cutting
+1,V01_C0033,877,882,6,7,1,"grasper,grasp,gallbladder",grasper,retract,gallbladder,clipping-and-cutting
+1,V01_C0034,894,920,27,60,1,"hook,dissect,gallbladder",hook,retract,cystic_duct,gallbladder-dissection
+1,V01_C0035,936,960,25,82,1,"irrigator,aspirate,fluid",irrigator,retract,fluid,gallbladder-dissection
+1,V01_C0036,964,970,7,82,1,"irrigator,aspirate,fluid",irrigator,retract,fluid,gallbladder-dissection
+1,V01_C0037,972,977,6,82,1,"irrigator,aspirate,fluid",irrigator,retract,fluid,gallbladder-dissection
+1,V01_C0038,981,987,7,82,1,"irrigator,aspirate,fluid",irrigator,retract,fluid,gallbladder-dissection
+1,V01_C0039,990,995,6,82,1,"irrigator,aspirate,fluid",irrigator,retract,fluid,gallbladder-dissection
+1,V01_C0040,1010,1025,16,24,1,"bipolar,coagulate,cystic_artery",bipolar,retract,cystic_artery,gallbladder-dissection
+1,V01_C0041,1039,1099,61,60,1,"hook,dissect,gallbladder",hook,retract,cystic_duct,gallbladder-dissection
+1,V01_C0042,1100,1110,11,"17,60",2,"grasper,retract,gallbladder | hook,dissect,gallbladder","grasper,hook","retract,retract","cystic_plate,cystic_duct",gallbladder-dissection
+1,V01_C0043,1111,1115,5,60,1,"hook,dissect,gallbladder",hook,retract,cystic_duct,gallbladder-dissection
+1,V01_C0044,1118,1157,40,60,1,"hook,dissect,gallbladder",hook,retract,cystic_duct,gallbladder-dissection
+1,V01_C0045,1164,1180,17,"19,60",2,"grasper,retract,liver | hook,dissect,gallbladder","grasper,hook","retract,retract","cystic_plate,cystic_duct",gallbladder-dissection
+1,V01_C0046,1182,1191,10,"17,19,60",3,"grasper,retract,gallbladder | grasper,retract,liver | hook,dissect,gallbladder","grasper,grasper,hook","retract,retract,retract","cystic_plate,cystic_plate,cystic_duct",gallbladder-dissection
+1,V01_C0047,1196,1203,8,"17,19,60",3,"grasper,retract,gallbladder | grasper,retract,liver | hook,dissect,gallbladder","grasper,grasper,hook","retract,retract,retract","cystic_plate,cystic_plate,cystic_duct",gallbladder-dissection
+1,V01_C0048,1208,1253,46,"7,19,60",3,"grasper,grasp,gallbladder | grasper,retract,liver | hook,dissect,gallbladder","grasper,grasper,hook","retract,retract,retract","gallbladder,cystic_plate,cystic_duct",gallbladder-dissection
+1,V01_C0049,1262,1282,21,"7,19,60",3,"grasper,grasp,gallbladder | grasper,retract,liver | hook,dissect,gallbladder","grasper,grasper,hook","retract,retract,retract","gallbladder,cystic_plate,cystic_duct",gallbladder-dissection
+1,V01_C0050,1283,1309,27,"19,60",2,"grasper,retract,liver | hook,dissect,gallbladder","grasper,hook","retract,retract","cystic_plate,cystic_duct",gallbladder-dissection
+1,V01_C0051,1310,1319,10,"7,19,60",3,"grasper,grasp,gallbladder | grasper,retract,liver | hook,dissect,gallbladder","grasper,grasper,hook","retract,retract,retract","gallbladder,cystic_plate,cystic_duct",gallbladder-dissection
+1,V01_C0052,1320,1326,7,"19,60",2,"grasper,retract,liver | hook,dissect,gallbladder","grasper,hook","retract,retract","cystic_plate,cystic_duct",gallbladder-dissection
+1,V01_C0053,1327,1332,6,"7,19,60",3,"grasper,grasp,gallbladder | grasper,retract,liver | hook,dissect,gallbladder","grasper,grasper,hook","retract,retract,retract","gallbladder,cystic_plate,cystic_duct",gallbladder-dissection
+1,V01_C0054,1333,1377,45,"19,60",2,"grasper,retract,liver | hook,dissect,gallbladder","grasper,hook","retract,retract","cystic_plate,cystic_duct",gallbladder-dissection
+1,V01_C0055,1381,1403,23,"7,19,60",3,"grasper,grasp,gallbladder | grasper,retract,liver | hook,dissect,gallbladder","grasper,grasper,hook","retract,retract,retract","gallbladder,cystic_plate,cystic_duct",gallbladder-dissection
+1,V01_C0056,1404,1430,27,"19,60",2,"grasper,retract,liver | hook,dissect,gallbladder","grasper,hook","retract,retract","cystic_plate,cystic_duct",gallbladder-dissection
+1,V01_C0057,1443,1459,17,19,1,"grasper,retract,liver",grasper,retract,cystic_plate,gallbladder-dissection
+1,V01_C0058,1478,1505,28,12,1,"grasper,grasp,specimen_bag",grasper,retract,gallbladder,gallbladder-packaging
+1,V01_C0059,1512,1517,6,"12,13",2,"grasper,grasp,specimen_bag | grasper,pack,gallbladder","grasper,grasper","retract,retract","gallbladder,liver",gallbladder-packaging
+1,V01_C0060,1523,1528,6,13,1,"grasper,pack,gallbladder",grasper,retract,liver,gallbladder-packaging
+1,V01_C0061,1534,1540,7,"12,13",2,"grasper,grasp,specimen_bag | grasper,pack,gallbladder","grasper,grasper","retract,retract","gallbladder,liver",gallbladder-packaging
+1,V01_C0062,1541,1564,24,12,1,"grasper,grasp,specimen_bag",grasper,retract,gallbladder,gallbladder-packaging
+1,V01_C0063,1567,1605,39,19,1,"grasper,retract,liver",grasper,retract,cystic_plate,gallbladder-packaging
+1,V01_C0064,1606,1624,19,"19,82",2,"grasper,retract,liver | irrigator,aspirate,fluid","grasper,irrigator","retract,retract","cystic_plate,fluid",cleaning-and-coagulation
+1,V01_C0065,1626,1638,13,"19,92",2,"grasper,retract,liver | irrigator,retract,liver","grasper,irrigator","retract,retract","cystic_plate,cystic_plate",cleaning-and-coagulation
+1,V01_C0066,1641,1651,11,12,1,"grasper,grasp,specimen_bag",grasper,retract,gallbladder,cleaning-and-coagulation
+1,V01_C0067,1658,1665,8,12,1,"grasper,grasp,specimen_bag",grasper,retract,gallbladder,gallbladder-extraction
+1,V01_C0068,1671,1677,7,12,1,"grasper,grasp,specimen_bag",grasper,retract,gallbladder,gallbladder-extraction
+1,V01_C0069,1702,1708,7,12,1,"grasper,grasp,specimen_bag",grasper,retract,gallbladder,gallbladder-extraction
+1,V01_C0070,1711,1717,7,12,1,"grasper,grasp,specimen_bag",grasper,retract,gallbladder,gallbladder-extraction
