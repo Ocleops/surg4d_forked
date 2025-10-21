@@ -10,3 +10,4 @@ preprocess/preprocess_result
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+.cursor/
