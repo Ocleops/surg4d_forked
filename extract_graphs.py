@@ -46,8 +46,7 @@ def load_gaussian_model(
     os.environ["use_discrete_lang_f"] = cfg.splat.use_discrete_lang_f
     
     clip_dir = Path(clip.dir)
-    output_root = Path(cfg.get("output_root", "output"))
-    model_path = output_root / clip_dir.name
+    model_path = Path(cfg.output_root) / clip_dir.name
     
     # Create argument parser
     parser = argparse.ArgumentParser()
@@ -163,17 +162,31 @@ def normalize_dep_dim(x):
     return (x - x.mean()) / x.std()
 
 
-def positions_at_timestep(gaussians: GaussianModel, timestep: float):
+def deform_at_timestep(gaussians: GaussianModel, timestep: float, use_dynamic_language: bool):
+    """Extract deformed positions and language features at a specific timestep.
+    
+    Args:
+        gaussians (GaussianModel): The gaussian model
+        timestep (float): The timestep to extract features at
+        use_dynamic_language (bool): Whether to extract deformed language features
+        
+    Returns:
+        tuple: (positions, language_features) as numpy arrays
+            - positions: (N, 3)
+            - language_features: (N, D) if use_dynamic_language else None
+    """
     with torch.no_grad():
         means3D = gaussians.get_xyz
         # Short-circuit if no gaussians remain after filtering
         if means3D.shape[0] == 0:
-            return means3D.detach().cpu().numpy()
+            return means3D.detach().cpu().numpy(), None
+        
         scales = gaussians._scaling
         rotations = gaussians._rotation
         opacity = gaussians._opacity
         shs = gaussians.get_features
         lang = gaussians.get_language_feature
+        
         # Ensure time has the same dtype/device as model tensors
         time = torch.full(
             (means3D.shape[0], 1),
@@ -181,29 +194,44 @@ def positions_at_timestep(gaussians: GaussianModel, timestep: float):
             device=means3D.device,
             dtype=means3D.dtype,
         )
-        # Ensure language deformation is disabled for positional query
+        
+        # Set language deformation based on whether we want dynamic language features
         try:
-            gaussians._deformation.deformation_net.args.no_dlang = 1
+            orig_no_dlang = gaussians._deformation.deformation_net.args.no_dlang
+            gaussians._deformation.deformation_net.args.no_dlang = 0 if use_dynamic_language else 1
         except Exception:
-            pass
-        means3D_final, _, _, _, _, _, _ = gaussians._deformation(
+            orig_no_dlang = None
+        
+        # Single pass through deformation network
+        means3D_final, _, _, _, _, lang_final, _ = gaussians._deformation(
             means3D, scales, rotations, opacity, shs, lang, time
         )
-    return means3D_final.detach().cpu().numpy()
+        
+        # Restore original setting
+        if orig_no_dlang is not None:
+            try:
+                gaussians._deformation.deformation_net.args.no_dlang = orig_no_dlang
+            except Exception:
+                pass
+        
+        positions = means3D_final.detach().cpu().numpy()
+        lang_features = lang_final.detach().cpu().numpy() if use_dynamic_language else None
+        
+    return positions, lang_features
 
 
 def cluster_gaussians(gaussians: GaussianModel, cfg: DictConfig):
-    # position
+    # position - use deformation network but don't need dynamic language features here
     pos_through_time = np.concatenate(
         [
-            normalize_indep_dim(positions_at_timestep(gaussians, t))
+            normalize_indep_dim(deform_at_timestep(gaussians, t, use_dynamic_language=False)[0])
             for t in [0.0, 0.5, 1.0]
         ],
         axis=-1,
     )
     pos_through_time /= 9
 
-    # instance qwen
+    # instance qwen - normalize locally for clustering
     instance_features = gaussians.get_language_feature[:, 3:].detach().cpu().numpy()
     instance_features = normalize_dep_dim(instance_features)
     instance_features /= 3
@@ -218,7 +246,7 @@ def cluster_gaussians(gaussians: GaussianModel, cfg: DictConfig):
 
 
 def filter_clusters(clusters, gaussians, scene, cfg: DictConfig):
-    pos = normalize_indep_dim(positions_at_timestep(gaussians, 0.0))
+    pos = normalize_indep_dim(deform_at_timestep(gaussians, 0.0, use_dynamic_language=False)[0])
     lf = gaussians.get_language_feature.detach().cpu().numpy()
     lf = normalize_dep_dim(lf)
 
@@ -366,6 +394,7 @@ def cluster_qwen_features(
     clusters: np.ndarray,
     cfg: DictConfig,
     clip: DictConfig,
+    lang_features: np.ndarray = None,
 ) -> dict[int, np.ndarray]:
     """Extract qwen features from each cluster by sub-clustering its Qwen features.
     
@@ -374,6 +403,7 @@ def cluster_qwen_features(
         clusters (np.ndarray): Cluster ids.
         cfg (DictConfig): Hydra configuration.
         clip (DictConfig): Clip configuration.
+        lang_features (np.ndarray): Language features to use. If None, use static features from gaussians.
         
     Returns:
         Dict[int, np.ndarray]: map of cluster id to torch tensor of shape (n_feats, 3584)
@@ -381,9 +411,16 @@ def cluster_qwen_features(
     cluster_feats = {}
     for cluster_id in np.unique(clusters):
         cluster_mask = torch.tensor(clusters) == cluster_id
-        cluster_lfs = (
-            gaussians.get_language_feature[cluster_mask][:, :3].detach().cpu().numpy()
-        )
+        
+        if lang_features is not None:
+            # Use provided language features (could be dynamic)
+            cluster_lfs = lang_features[cluster_mask.cpu().numpy()][:, :3]
+        else:
+            # Use static language features
+            cluster_lfs = (
+                gaussians.get_language_feature[cluster_mask][:, :3].detach().cpu().numpy()
+            )
+        
         random_sample = cluster_lfs[
             np.random.choice(
                 np.arange(cluster_lfs.shape[0]),
@@ -460,25 +497,16 @@ def extract_graph(clip: DictConfig, cfg: DictConfig):
     # Load model
     gaussians, scene, dataset, args, pipeline = load_gaussian_model(clip, cfg)
 
+    # Check if dynamic language features are enabled
+    use_dynamic_language = cfg.splat.get("dynamic_language", False)
+    logger.info(f"Dynamic language features: {'ENABLED' if use_dynamic_language else 'DISABLED'}")
+    
     # Gaussian filtering
     opacity_mask = (gaussians._opacity > cfg.graph_extraction.opacity_threshold).squeeze()
     inst_feat_norm_mask = (
         gaussians.get_language_feature[:, :3].norm(dim=-1) > cfg.graph_extraction.inst_feat_norm_threshold
     ).squeeze()
     filter_gaussians(gaussians, opacity_mask & inst_feat_norm_mask)
-
-    # Normalize language features
-    gaussians._language_feature = gaussians._language_feature.detach()
-    patch_feats = gaussians.get_language_feature[:, :3]
-    instance_feats = gaussians.get_language_feature[:, 3:]
-    patch_feats = patch_feats / torch.clamp(
-        patch_feats.norm(dim=-1, keepdim=True), min=1e-8
-    )
-    instance_feats = instance_feats / torch.clamp(
-        instance_feats.norm(dim=-1, keepdim=True), min=1e-8
-    )
-    gaussians._language_feature[:, :3] = patch_feats
-    gaussians._language_feature[:, 3:] = instance_feats
 
     # Cluster, filter clusters, filter gaussians that are not in a cluster
     clusters = cluster_gaussians(gaussians, cfg=cfg)
@@ -490,10 +518,25 @@ def extract_graph(clip: DictConfig, cfg: DictConfig):
 
     # Cluster features
     timesteps = np.linspace(0, 1, cfg.graph_extraction.n_timesteps)
-    qwen_per_cluster = cluster_qwen_features(gaussians, clusters, cfg, clip)
-    pos_through_time = np.stack(
-        [positions_at_timestep(gaussians, t) for t in timesteps]
-    )
+    
+    # get position and lf at timesteps
+    deformed_data = [deform_at_timestep(gaussians, t, use_dynamic_language) for t in timesteps]
+    pos_through_time = np.stack([pos for pos, _ in deformed_data])
+    
+    if use_dynamic_language:
+        lang_through_time = np.stack([lang for _, lang in deformed_data])
+        logger.info("Extracting timestep-wise qwen features per cluster...")
+        qwen_per_cluster_through_time = [
+            cluster_qwen_features(gaussians, clusters, cfg, clip, lang_features=lang_through_time[t_idx])
+            for t_idx in range(len(timesteps))
+        ]
+    else:
+        lang_through_time = None
+        # Extract static qwen features per cluster (use language features from timestep 0.0)
+        logger.info("Extracting static qwen features per cluster...")
+        # For static, just use the canonical language features
+        qwen_per_cluster = cluster_qwen_features(gaussians, clusters, cfg, clip, lang_features=None)
+    
     (
         cluster_pos_through_time,
         cluster_center_through_time,
@@ -522,24 +565,44 @@ def extract_graph(clip: DictConfig, cfg: DictConfig):
         np.save(
             out / "clusters.npy", clusters
         )  # cluster ids after all filtering (n_filtered_gaussians,)
-        np.save(
-            out / "patch_latents.npy",
-            gaussians.get_language_feature[:, :3].detach().cpu().numpy(),
-        )  # patch features (n_filtered_gaussians, 3)
-        np.save(
-            out / "instance_latents.npy",
-            gaussians.get_language_feature[:, 3:].detach().cpu().numpy(),
-        )  # qwen features (n_filtered_gaussians, 3)
+        
+        # Save language features (either canonical or through time, but not both)
+        if use_dynamic_language and lang_through_time is not None:
+            np.save(
+                out / "lang_features_through_time.npy", lang_through_time
+            )  # language features through time (timesteps, n_filtered_gaussians, lang_dim)
+        else:
+            # Only save canonical features if not using dynamic language
+            np.save(
+                out / "patch_latents.npy",
+                gaussians.get_language_feature[:, :3].detach().cpu().numpy(),
+            )  # patch features (n_filtered_gaussians, 3) - canonical/static
+            np.save(
+                out / "instance_latents.npy",
+                gaussians.get_language_feature[:, 3:].detach().cpu().numpy(),
+            )  # qwen features (n_filtered_gaussians, 3) - canonical/static
+        
         np.save(out / "opacities.npy", gaussians._opacity.detach().cpu().numpy())
         np.save(out / "positions.npy", gaussians.get_xyz.detach().cpu().numpy())
         np.save(out / "colors.npy", gaussians.get_features.detach().cpu().numpy())
         
-    cluster_feats_out = out / "c_qwen_feats"
-    cluster_feats_out.mkdir(parents=True, exist_ok=True)
-    for k, v in qwen_per_cluster.items():
-        np.save(
-            cluster_feats_out / f"{k}.npy", v
-        )  # qwen features of each cluster
+    # Save cluster qwen features with timestep as top-level dimension
+    if use_dynamic_language:
+        cluster_feats_dict = {}
+        for cluster_id in qwen_per_cluster_through_time[0].keys():
+            # Stack features for this cluster across all timesteps
+            cluster_feats_dict[str(cluster_id)] = np.stack([
+                qwen_dict[cluster_id] for qwen_dict in qwen_per_cluster_through_time
+            ])  # shape: (timesteps, n_feats, 3584)
+        np.savez(
+            out / "c_qwen_feats.npz", **cluster_feats_dict
+        )  # qwen features per cluster through time (cluster_id -> (timesteps, n_feats, 3584))
+    else:
+        # For static language: save as dict without timestep dimension
+        cluster_feats_dict = {str(k): v for k, v in qwen_per_cluster.items()}
+        np.savez(
+            out / "c_qwen_feats.npz", **cluster_feats_dict
+        )  # qwen features per cluster (cluster_id -> (n_feats, 3584))
     np.save(
         out / "c_centroids.npy", cluster_pos_through_time
     )  # cluster centroids through time (timesteps, n_clusters, 3)
@@ -565,6 +628,7 @@ def extract_graph(clip: DictConfig, cfg: DictConfig):
         cluster_pos_through_time=cluster_pos_through_time,
         text_queries=None,
         cluster_correspondences=None,
+        lang_through_time=lang_through_time,
     )
     log_graph_structure_through_time(
         cluster_pos_through_time=cluster_pos_through_time,
