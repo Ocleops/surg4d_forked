@@ -4,7 +4,7 @@ defaults:
   - feature_extraction: default
   - autoencoder: default
   - splat: default
-  # - graph_extraction: default
+  - graph_extraction: default
   - _self_
 
 cholec80_root: data/cholec80

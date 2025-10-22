@@ -17,7 +17,7 @@ them in `data/cholec80`, `data/cholect50`, and `data/cholecseg8k` respectively.
 
 2. Configure the pipeline via hydra configs in `conf`.
 
-3. Either the steps for all clips independently
+3. Either run the steps for all clips independently
     ```bash
     pixi run python preprocess.py
     pixi run python generate_qwen_features.py
