@@ -11,7 +11,7 @@ from vipe import make_pipeline
 from vipe.streams.base import ProcessedVideoStream
 from vipe.streams.frame_dir_stream import FrameDirStream
 from vipe.utils.io import ArtifactPath
-from submodules.vipe.scripts.vipe_to_colmap import convert_vipe_to_colmap
+from scripts.vipe_to_colmap_local import convert_vipe_to_colmap
 import zipfile
 from openexr_numpy import imread
 from scipy.ndimage import label
@@ -185,6 +185,7 @@ def vipe_to_colmap(
             output_path=clip_dir,
             depth_step=cfg.preprocessing.vipe_depth_step,
             use_slam_map=cfg.preprocessing.vipe_slam_map,
+            use_single_depth=cfg.preprocessing.pc_single_depth_projection,
         )
 
 

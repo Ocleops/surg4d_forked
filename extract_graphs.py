@@ -552,7 +552,7 @@ def extract_graph(clip: DictConfig, cfg: DictConfig):
     clip_dir = Path(clip.dir)
     output_root = Path(cfg.get("output_root", "output"))
     model_path = output_root / clip_dir.name
-    out = Path(model_path) / "graph"
+    out = Path(model_path) / cfg.graph_extraction.graph_output_subdir
 
     out.mkdir(parents=True, exist_ok=True)
     if cfg.graph_extraction.store_verbose:

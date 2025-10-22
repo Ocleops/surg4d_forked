@@ -11,15 +11,15 @@ from qwen_vl import get_patched_qwen
 
 @hydra.main(config_path="conf", config_name="config.yaml", version_base="1.3")
 def main(cfg: DictConfig):
-    # Load qwen model once for all clips
-    model, processor = get_patched_qwen(
-        use_bnb_4bit=cfg.feature_extraction.bnb_4bit,
-        use_bnb_8bit=cfg.feature_extraction.bnb_8bit,
-    )
-    
     for clip in cfg.clips:
         process_clip(clip, cfg)
+        model, processor = get_patched_qwen(
+            use_bnb_4bit=cfg.feature_extraction.bnb_4bit,
+            use_bnb_8bit=cfg.feature_extraction.bnb_8bit,
+        )
         extract_qwen_features(clip, cfg, model, processor)
+        del model
+        del processor
         train_ae(clip, cfg)
         train_splat(clip, cfg)
         extract_graph(clip, cfg)

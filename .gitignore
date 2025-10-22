@@ -12,3 +12,4 @@ preprocess/preprocess_result
 !.pixi/config.toml
 .cursor/
 outputs/
+multirun/

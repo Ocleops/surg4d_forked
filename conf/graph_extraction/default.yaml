@@ -1,3 +1,5 @@
+graph_output_subdir: graph
+
 load_stage: fine-lang
 iteration: -1
 
@@ -14,12 +16,12 @@ max_features_per_cluster: 40
 min_features_per_cluster: 4
 decode_batch_size: 1024
 
-n_timesteps: 5 # graph timesteps
+n_timesteps: 15 # graph timesteps
 
 graph_edge_threshold: 0.05 # minimum bhattacharyya coefficient to create an edge between clusters
 
 store_verbose: true  # save verbose outputs (renders, palettes, raw gaussians, etc.)
-n_render_views: 5  # number of random camera views to render (only if store_verbose is true)
+n_render_views: 1  # number of random camera views to render (only if store_verbose is true)
 
 random_seed: 1234
 
