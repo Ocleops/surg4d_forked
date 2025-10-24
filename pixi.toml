@@ -5,23 +5,28 @@ platforms = ["linux-64"]
 version = "0.1.0"
 
 [tasks]
-install-simple-knn = "python -m pip install --no-build-isolation -e submodules/simple-knn/"
+install-simple-knn = "python -m pip install --no-build-isolation -e submodules/simple-knn/ && echo 'from ._C import distCUDA2\n\n__all__ = [\"distCUDA2\"]' > submodules/simple-knn/simple_knn/__init__.py"
 install-rasterization = "python -m pip install --no-build-isolation -e submodules/4d-langsplat-rasterization/"
 install-deva = "python -m pip install -e submodules/4d-langsplat-tracking-anything-with-deva/"
 install-segment-anything = "python -m pip install git+https://github.com/facebookresearch/segment-anything.git"
-setup = { depends-on = ["install-simple-knn", "install-rasterization", "install-deva", "install-segment-anything"] }
+install-vipe = "python -m pip install --no-build-isolation submodules/vipe/"
+setup = { depends-on = ["install-simple-knn", "install-rasterization", "install-deva", "install-segment-anything", "install-vipe"] }
 # run pixi run setup after pixi install to install cuda extensions
 
 [activation.env]
-PYTHONNOUSERSITE = "1"
-CUDA_VISIBLE_DEVICES = "$(if [ $(hostname) = 'a4000-2402n18' ]; then echo '0'; fi)"
+# some cuda extensions need to link against pytorch
 LD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/.pixi/envs/default/lib/python3.10/site-packages/torch/lib:$LD_LIBRARY_PATH"
+# ignore ~/.local packages in case someone accidentally installed stuff with system python
+PYTHONNOUSERSITE = "1"
+# use gpu 1 on a4000-2402n18 (t's machine)
+# CUDA_VISIBLE_DEVICES = "$(if [ $(hostname) = 'a4000-2402n18' ]; then echo '1'; fi)"
 
 [dependencies]
 python = "==3.10"
 cuda-toolkit = "12.4.*"
 cuda-version = "==12.4"
 libxcrypt = "*"
+colmap = ">=3.9.1,<4"
 
 [pypi-dependencies]
 pip = "*"
@@ -44,7 +49,6 @@ seaborn = ">=0.13.2, <0.14"
 mediapy = ">=1.2.4, <2"
 numpy = ">=2.2.6, <3"
 scipy = ">=1.15.3, <2"
-scikit-learn = ">=1.7.2, <2"
 pandas = ">=2.3.3, <3"
 networkx = ">=3.4.2, <4"
 pyyaml = ">=6.0.3, <7"
@@ -67,4 +71,8 @@ einops = ">=0.8.1, <0.9"
 lpips = ">=0.1.4, <0.2"
 rerun-sdk = ">=0.25.1, <0.26"
 tensorboard = ">=2.20.0, <3"
+hydra-core = ">=1.3.2, <2"
+openexr-numpy = ">=0.0.8, <0.0.9"
+scikit-learn = ">=1.7.2, <2"
+rich = ">=14.2.0, <15"
 

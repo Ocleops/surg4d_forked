@@ -11,3 +11,6 @@ preprocess/preprocess_result
 .pixi/*
 !.pixi/config.toml
 .cursor/
+outputs/
+multirun/
+benchmark/results/

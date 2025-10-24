@@ -499,7 +499,7 @@ def scene_reconstruction(
             logger.info("loss is nan,end training, reexecv program now.")
 
             os.execv(sys.executable, [sys.executable] + sys.argv)
-        loss_cutoff = 2.5 + 2.5 * args.depth_loss_weight
+        loss_cutoff = 2.5 + 2.5 * args.depth_loss_weight + 2.5 * args.opacity_loss_weight
         if loss.item() > loss_cutoff and iteration > 100 and "coarse-lang" not in stage:
             logger.info("loss", loss)
             logger.info(
