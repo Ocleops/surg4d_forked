@@ -17,6 +17,18 @@ from openexr_numpy import imread
 from scipy.ndimage import label
 
 from cholec_utils import get_clip_seg8k, parse_cholecseg8k_instance_mask
+import torch
+from vipe.utils.depth import reliable_depth_mask_range
+from vipe.utils.io import read_depth_artifacts
+import re
+
+
+def extract_frame_number(filepath: Path) -> int:
+    """Extract frame number from filename for proper numerical sorting."""
+    match = re.search(r'frame_(\d+)', filepath.stem)
+    if match:
+        return int(match.group(1))
+    return 0
 
 
 def center_crop_divisible(
@@ -173,6 +185,90 @@ def vipe(clip: DictConfig, cfg: DictConfig):
     GlobalHydra.instance().clear()
 
 
+def select_best_frame_for_pointcloud(
+    clip: DictConfig, cfg: DictConfig, artifact
+) -> int | None:
+    """Select the best frame for single depth projection initialization.
+    
+    Selects based on:
+    1. (Primary) Number of instances in the instance mask
+    2. (Secondary) Depth range as tie-breaker
+    
+    Returns:
+        Frame index to use, or None if should use all frames
+    """
+    if not cfg.preprocessing.pc_single_depth_projection:
+        return None
+    
+    clip_dir = Path(cfg.preprocessed_root) / clip.name
+    
+    if not cfg.preprocessing.pc_single_depth_use_instance_count:
+        # Fallback to original depth range only logic
+        print("Selecting frame based on depth range only...")
+        max_range = -1
+        max_range_idx = 0
+        
+        for idx, (_, depth) in enumerate(read_depth_artifacts(artifact.depth_path)):
+            if depth is not None:
+                depth_mask = reliable_depth_mask_range(depth).numpy()
+                if depth_mask.sum() > 0:
+                    valid_depths = depth.numpy()[depth_mask]
+                    depth_range = valid_depths.max() - valid_depths.min()
+                    if depth_range > max_range:
+                        max_range = depth_range
+                        max_range_idx = idx
+        
+        print(f"Selected frame {max_range_idx} with depth range {max_range:.4f}")
+        return max_range_idx
+    
+    # Use instance count as primary criterion
+    print("Selecting frame based on instance count (primary) and depth range (secondary)...")
+    
+    instance_mask_dir = clip_dir / cfg.preprocessing.instance_mask_subdir
+    if not instance_mask_dir.exists():
+        print(f"Warning: Instance mask directory not found at {instance_mask_dir}, falling back to depth range only")
+        return select_best_frame_for_pointcloud(
+            clip, 
+            cfg.__class__({**cfg, 'preprocessing': {**cfg.preprocessing, 'pc_single_depth_use_instance_count': False}}),
+            artifact
+        )
+    
+    instance_masks = sorted(list(instance_mask_dir.glob("*.npy")), key=extract_frame_number)
+    
+    # Collect metrics for all frames
+    frame_metrics = []
+    for idx, (_, depth) in enumerate(read_depth_artifacts(artifact.depth_path)):
+        if depth is not None:
+            depth_mask = reliable_depth_mask_range(depth).numpy()
+            if depth_mask.sum() > 0:
+                valid_depths = depth.numpy()[depth_mask]
+                depth_range = valid_depths.max() - valid_depths.min()
+                
+                # Load corresponding instance mask
+                if idx < len(instance_masks):
+                    instance_mask = np.load(instance_masks[idx])
+                    # Count unique instances (excluding background = 0)
+                    unique_instances = np.unique(instance_mask)
+                    instance_count = len(unique_instances[unique_instances != 0])
+                else:
+                    instance_count = 0
+                
+                frame_metrics.append((idx, instance_count, depth_range))
+    
+    # Sort by instance count (descending), then by depth range (descending)
+    frame_metrics.sort(key=lambda x: (x[1], x[2]), reverse=True)
+    
+    if frame_metrics:
+        selected_idx = frame_metrics[0][0]
+        selected_instance_count = frame_metrics[0][1]
+        selected_depth_range = frame_metrics[0][2]
+        print(f"Selected frame {selected_idx} with {selected_instance_count} instances and depth range {selected_depth_range:.4f}")
+        return selected_idx
+    else:
+        print("Warning: No valid frames found, falling back to first frame")
+        return 0
+
+
 def vipe_to_colmap(
     clip: DictConfig,
     cfg: DictConfig,
@@ -180,12 +276,15 @@ def vipe_to_colmap(
     clip_dir = Path(cfg.preprocessed_root) / clip.name
     artifacts = list(ArtifactPath.glob_artifacts(clip_dir, use_video=True))
     for artifact in artifacts:
+        # Select the best frame if using single depth projection
+        selected_frame_idx = select_best_frame_for_pointcloud(clip, cfg, artifact)
+        
         convert_vipe_to_colmap(
             artifact=artifact,
             output_path=clip_dir,
             depth_step=cfg.preprocessing.vipe_depth_step,
             use_slam_map=cfg.preprocessing.vipe_slam_map,
-            use_single_depth=cfg.preprocessing.pc_single_depth_projection,
+            single_frame_idx=selected_frame_idx,
         )
 
 
@@ -222,12 +321,12 @@ def extract_depth_maps(clip: DictConfig, cfg: DictConfig):
     rgb_zip.unlink()
     
     # rename to 6 digit format
-    for exr_file in depth_dir.glob("*.exr"):
+    for exr_file in sorted(depth_dir.glob("*.exr"), key=extract_frame_number):
         frame_idx = int(exr_file.name[:5])
         exr_file.rename(exr_file.with_name(f"{frame_idx:06d}.exr"))
 
     # convert to np array
-    for exr_file in depth_dir.glob("*.exr"):
+    for exr_file in sorted(depth_dir.glob("*.exr"), key=extract_frame_number):
         depth = imread(str(exr_file), "Z")
         np.save(exr_file.with_name(f"{exr_file.stem}.npy"), depth)
 

@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import re
 
 from pathlib import Path
 from typing import Tuple
@@ -28,6 +29,14 @@ from vipe.utils.io import (
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+
+def extract_frame_number(filepath: Path) -> int:
+    """Extract frame number from filename for proper numerical sorting."""
+    match = re.search(r'frame_(\d+)', filepath.stem)
+    if match:
+        return int(match.group(1))
+    return 0
 
 
 def quaternion_from_matrix(matrix: np.ndarray) -> np.ndarray:
@@ -129,49 +138,41 @@ def write_points3d_txt_from_slam_map(output_dir: Path, artifact: ArtifactPath):
 
 
 def write_points3d_txt_from_depth(
-    output_dir: Path, artifact: ArtifactPath, depth_step: int, spatial_subsample: int = 4, use_single_depth: bool = False
+    output_dir: Path, artifact: ArtifactPath, depth_step: int, spatial_subsample: int = 4, single_frame_idx: int | None = None
 ):
-    """Write COLMAP points3D.txt file from depth maps."""
+    """Write COLMAP points3D.txt file from depth maps.
+    
+    Args:
+        output_dir: Output directory for COLMAP files
+        artifact: Artifact path containing depth maps
+        depth_step: Step size for depth map iteration (used when single_frame_idx is None)
+        spatial_subsample: Spatial subsampling factor
+        single_frame_idx: If provided, only use this specific frame index for point cloud initialization
+    """
     _, pose_data = read_pose_artifacts(artifact.pose_path)
     _, intrinsics, camera_types = read_intrinsics_artifacts(artifact.intrinsics_path)
     camera_type = camera_types[0]
     points3d_file = output_dir / "points3D.txt"
 
     image_dir = output_dir / "images"
-    images = sorted(list(image_dir.glob("*.jpg")))
+    images = sorted(list(image_dir.glob("*.jpg")), key=extract_frame_number)
     # Collect all 3D points first
     all_points = []
     point_id = 1
 
     rays: np.ndarray | None = None
     
-    # If using single depth, first find the depth map with highest range
-    selected_idx = None
-    if use_single_depth:
-        logger.info("Finding depth map with highest range...")
-        max_range = -1
-        max_range_idx = 0
-        
-        for idx, (_, depth) in enumerate(read_depth_artifacts(artifact.depth_path)):
-            if depth is not None:
-                depth_mask = reliable_depth_mask_range(depth).numpy()
-                if depth_mask.sum() > 0:
-                    valid_depths = depth.numpy()[depth_mask]
-                    depth_range = valid_depths.max() - valid_depths.min()
-                    if depth_range > max_range:
-                        max_range = depth_range
-                        max_range_idx = idx
-        
-        selected_idx = max_range_idx
-        logger.info(f"Selected depth map {selected_idx} with range {max_range:.4f}")
+    # Log which frame selection mode we're using
+    if single_frame_idx is not None:
+        logger.info(f"Using single frame {single_frame_idx} for point cloud initialization")
 
     for idx, (_, depth) in enumerate(read_depth_artifacts(artifact.depth_path)):
         if idx % 30 == 0:
             logger.info(f"Processed {idx} depth maps")
 
         # Skip based on mode
-        if use_single_depth:
-            if idx != selected_idx:
+        if single_frame_idx is not None:
+            if idx != single_frame_idx:
                 continue
         else:
             if idx % depth_step != 0:
@@ -254,8 +255,16 @@ def extract_frames(artifact: ArtifactPath, output_dir: Path) -> Tuple[int, int]:
     return frame_width, frame_height
 
 
-def convert_vipe_to_colmap(artifact: ArtifactPath, output_path: Path, depth_step: int, use_slam_map: bool, use_single_depth: bool = False):
-    """Convert ViPE reconstruction results to COLMAP format."""
+def convert_vipe_to_colmap(artifact: ArtifactPath, output_path: Path, depth_step: int, use_slam_map: bool, single_frame_idx: int | None = None):
+    """Convert ViPE reconstruction results to COLMAP format.
+    
+    Args:
+        artifact: Artifact path containing VIPE results
+        output_path: Output directory for COLMAP files
+        depth_step: Step size for depth map iteration (used when single_frame_idx is None)
+        use_slam_map: Whether to use SLAM map for point cloud
+        single_frame_idx: If provided, only use this specific frame index for point cloud initialization
+    """
 
     logger.info(
         f"Converting ViPE results from {artifact.base_path} ({artifact.artifact_name}) to COLMAP format at {output_path}"
@@ -279,7 +288,7 @@ def convert_vipe_to_colmap(artifact: ArtifactPath, output_path: Path, depth_step
     if use_slam_map:
         write_points3d_txt_from_slam_map(output_path, artifact)
     else:
-        write_points3d_txt_from_depth(output_path, artifact, depth_step, use_single_depth=use_single_depth)
+        write_points3d_txt_from_depth(output_path, artifact, depth_step, single_frame_idx=single_frame_idx)
 
     logger.info("COLMAP conversion completed successfully!")
     logger.info(f"Output directory: {output_path}")
@@ -307,6 +316,12 @@ def main():
     parser.add_argument("--use_slam_map", action="store_true", help="Use SLAM map to unproject depth maps")
     parser.add_argument("--depth_step", type=int, default=16, help="Step size for depth extraction (default: 16)")
     parser.add_argument(
+        "--single_frame_idx",
+        type=int,
+        default=None,
+        help="If provided, use only this specific frame index for point cloud initialization",
+    )
+    parser.add_argument(
         "--output",
         "-o",
         type=Path,
@@ -330,7 +345,7 @@ def main():
         args.output = args.vipe_path.parent / f"{args.vipe_path.name}_colmap"
 
     for artifact in artifacts:
-        convert_vipe_to_colmap(artifact, args.output / artifact.artifact_name, args.depth_step, args.use_slam_map)
+        convert_vipe_to_colmap(artifact, args.output / artifact.artifact_name, args.depth_step, args.use_slam_map, args.single_frame_idx)
     return 0
 
 
