@@ -1,6 +1,6 @@
 import hydra
 from hydra.core.global_hydra import GlobalHydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
 
 from preprocess import process_clip
@@ -8,6 +8,7 @@ from generate_qwen_features import extract_qwen_features
 from train_autoencoders import train_ae
 from train_splats import train_splat
 from extract_graphs import extract_graph
+from evaluate_benchmark import evaluate_clip
 
 
 import sys
@@ -52,6 +53,10 @@ def main():
     # Clear after composing the main config so vipe can initialize its own
     GlobalHydra.instance().clear()
 
+    for config_dump in cfg.config_dumps:
+        Path(config_dump).parent.mkdir(parents=True, exist_ok=True)
+        OmegaConf.save(cfg, config_dump)
+
     for clip in cfg.clips:
         process_clip(clip, cfg)
         get_patched = _get_qwen_loader(cfg)
@@ -62,6 +67,7 @@ def main():
         train_ae(clip, cfg)
         train_splat(clip, cfg)
         extract_graph(clip, cfg)
+        evaluate_clip(clip, cfg)
 
 if __name__ == "__main__":
     main()

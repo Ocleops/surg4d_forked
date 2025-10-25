@@ -575,7 +575,7 @@ def prompt_with_graph(
                 "text": '</spatial-graph>\n',
             }
         )
-
+    # TODO: adapt question and system_prompt 
     messages = [
         {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
         {
@@ -600,12 +600,16 @@ def prompt_with_graph(
     with open('qwen_messages.json', 'w') as fp:
         json.dump(messages, fp)
 
+    # print(f"messages: {messages}")
+    print(f"shape of node_feats: {len(node_feats)}")
+
     return generate_with_vision_features(
         messages=messages,
         vision_features=[torch.Tensor(f) for f in node_feats],
         model=model,
         processor=processor,
-        max_tokens=128,
+        # TODO: increase this?
+        max_tokens=5012,
     )
 
 

@@ -24,30 +24,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from benchmark.benchmark_config import BenchmarkConfig, normalize_for_matching
 from benchmark.cholect50_utils import CholecT50Loader
 from qwen_vl import get_patched_qwen, prompt_with_graph
+from qwen_vl_utils import process_vision_info
+
+from benchmark.frame_selectors import MultiFrameSample
 
 
-@dataclass
-class MultiFrameSample:
-    """Sample with multiple frames for temporal evaluation"""
-    video_id: int
-    start_frame: int
-    end_frame: int
-    clip_start: int
-    image_paths: List[Path]  # Multiple frames
-    graph_path: Optional[Path]
-    gt_triplets: List[Dict]  # Ground truth for the sequence
-    gt_phase: Optional[str]
-    
-    @property
-    def sample_id(self) -> str:
-        return f"v{self.video_id:02d}_f{self.start_frame:05d}-{self.end_frame:05d}"
-    
-    @property
-    def num_frames(self) -> int:
-        return len(self.image_paths)
-
-
-class MultiFrameEvaluator:
+class TripletsFrameEvaluator:
     """Evaluator for multi-frame triplet recognition with ablation study"""
     
     def __init__(self, config: BenchmarkConfig):
@@ -61,78 +43,15 @@ class MultiFrameEvaluator:
             device_map=config.device
         )
         print("✓ Model loaded")
-    
-    def _build_single_frame_prompt(self, gt_triplets: List[Dict]) -> str:
-        """Build prompt for single-frame condition"""
-        
-        # Get unique options from ground truth for this video
-        instruments = sorted(set(t['instrument'] for t in gt_triplets))
-        verbs = sorted(set(t['verb'] for t in gt_triplets))
-        targets = sorted(set(t['target'] for t in gt_triplets))
-        
-        prompt = """Analyze this surgical image and identify the action triplet(s).
 
-For EACH visible surgical instrument performing an action, identify:
-- Instrument: The surgical tool being used
-- Verb: The action being performed  
-- Target: The anatomical structure being acted upon
-
-Respond in JSON format:
-{
-  "triplets": [
-    {"instrument": "...", "verb": "...", "target": "..."},
-    ...
-  ]
-}
-
-Possible instruments: """ + ", ".join(instruments) + """
-Possible verbs: """ + ", ".join(verbs) + """
-Possible targets: """ + ", ".join(targets) + """
-
-If multiple instruments are active simultaneously, list all triplets.
-If no clear action is visible, return empty list."""
-        
-        return prompt
-    
-    def _build_multiframe_prompt(self, gt_triplets: List[Dict]) -> str:
-        """Build prompt for multi-frame condition"""
-        
-        instruments = sorted(set(t['instrument'] for t in gt_triplets))
-        verbs = sorted(set(t['verb'] for t in gt_triplets))
-        targets = sorted(set(t['target'] for t in gt_triplets))
-        
-        prompt = """Analyze this sequence of surgical frames and identify the action triplet(s) being performed throughout the sequence.
-
-For EACH surgical instrument performing an action in the sequence, identify:
-- Instrument: The surgical tool being used
-- Verb: The sustained action being performed across frames
-- Target: The anatomical structure being acted upon
-
-Respond in JSON format:
-{
-  "triplets": [
-    {"instrument": "...", "verb": "...", "target": "..."},
-    ...
-  ]
-}
-
-Possible instruments: """ + ", ".join(instruments) + """
-Possible verbs: """ + ", ".join(verbs) + """
-Possible targets: """ + ", ".join(targets) + """
-
-Focus on the CONSISTENT actions across the temporal sequence.
-If multiple instruments are active simultaneously, list all triplets."""
-        
-        return prompt
     
     def _query_single_frame(self, image_path: Path, prompt: str) -> str:
         """Query model with a single frame"""
-        
         messages = [
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "image": f"file://{image_path}"},
+                    {"type": "image", "image": f"{image_path}"},
                     {"type": "text", "text": prompt},
                 ],
             }
@@ -141,8 +60,10 @@ If multiple instruments are active simultaneously, list all triplets."""
         text = self.processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-        
-        image_inputs, video_inputs = self._process_vision_info(messages)
+
+        print(f"image_paths: {image_path}")
+        image_inputs, video_inputs = process_vision_info(messages)
+        print(f"image_inputs: {image_inputs}")
         inputs = self.processor(
             text=[text],
             images=image_inputs,
@@ -152,7 +73,7 @@ If multiple instruments are active simultaneously, list all triplets."""
         )
         inputs = inputs.to(self.model.device)
         
-        generated_ids = self.model.generate(**inputs, max_new_tokens=256)
+        generated_ids = self.model.generate(**inputs, max_new_tokens = 2048)
         generated_ids_trimmed = [
             out_ids[len(in_ids):] 
             for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
@@ -162,6 +83,8 @@ If multiple instruments are active simultaneously, list all triplets."""
             skip_special_tokens=True, 
             clean_up_tokenization_spaces=False
         )[0]
+
+        print(f"output_text: {output_text}")
         
         return output_text
     
@@ -170,8 +93,7 @@ If multiple instruments are active simultaneously, list all triplets."""
         
         # Build content with all images
         content = []
-        for img_path in image_paths:
-            content.append({"type": "image", "image": f"file://{img_path}"})
+        content.append({"type": "video", "video": [str(p) for p in image_paths]})
         content.append({"type": "text", "text": prompt})
         
         messages = [{"role": "user", "content": content}]
@@ -180,7 +102,9 @@ If multiple instruments are active simultaneously, list all triplets."""
             messages, tokenize=False, add_generation_prompt=True
         )
         
-        image_inputs, video_inputs = self._process_vision_info(messages)
+        print(f"image_paths: {image_paths}")
+        image_inputs, video_inputs = process_vision_info(messages)
+
         inputs = self.processor(
             text=[text],
             images=image_inputs,
@@ -190,7 +114,7 @@ If multiple instruments are active simultaneously, list all triplets."""
         )
         inputs = inputs.to(self.model.device)
         
-        generated_ids = self.model.generate(**inputs, max_new_tokens=256)
+        generated_ids = self.model.generate(**inputs, max_new_tokens = 2048)
         generated_ids_trimmed = [
             out_ids[len(in_ids):] 
             for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
@@ -200,14 +124,18 @@ If multiple instruments are active simultaneously, list all triplets."""
             skip_special_tokens=True, 
             clean_up_tokenization_spaces=False
         )[0]
+
+        print(f"output_text: {output_text}")
         
         return output_text
     
-    def _query_with_graph(self, image_paths: List[Path], graph_path: Path, prompt: str) -> str:
+    def _query_with_graph(self, image_paths: List[Path], graph_path: Path, prompt: str, system_prompt: str = None) -> str:
         """Query model with multiple frames AND scene graph"""
         
         # Load graph data
         graph_data = self._load_graph_data(graph_path)
+
+        print(f"shape of node_feats: {len(graph_data['node_feats'])}")
         
         if graph_data is None:
             # Fallback to multiframe without graph
@@ -222,8 +150,11 @@ If multiple instruments are active simultaneously, list all triplets."""
             node_extents=graph_data['node_extents'],
             question=prompt,
             model=self.model,
-            processor=self.processor
+            processor=self.processor,
+            system_prompt=system_prompt
         )
+
+        print(f"response: {response}")
         
         return response
     
@@ -233,21 +164,27 @@ If multiple instruments are active simultaneously, list all triplets."""
         try:
             # Assuming graph structure similar to video01_00080
             clip_dir = graph_path
+
+            print(f"clip_dir: {clip_dir}")
             
-            # Load qwen features
-            qwen_feat_dir = clip_dir / "qwen_instance_features"
-            if not qwen_feat_dir.exists():
-                print(f"Warning: No qwen features found at {qwen_feat_dir}")
+            # Load qwen features from npz file
+            qwen_feat_file = clip_dir / "c_qwen_feats.npz"
+            if not qwen_feat_file.exists():
+                print(f"Warning: No qwen features found at {qwen_feat_file}")
                 return None
             
-            feat_files = sorted(qwen_feat_dir.glob("*_f.npy"))
-            node_feats = [np.load(f) for f in feat_files]
+            # Load npz file and extract features in sorted cluster ID order
+            qwen_feats_dict = np.load(qwen_feat_file)
+            cluster_ids = sorted([int(k) for k in qwen_feats_dict.keys()])
+            node_feats = [qwen_feats_dict[str(cluster_id)][0] for cluster_id in cluster_ids]
+            # TODO this is hardcoded to use features at timestep 0
             
             # Load spatial matrices
-            adjacency_matrices = np.load(clip_dir / "adjacency_matrices.npy")
-            centers = np.load(clip_dir / "centers.npy")
-            centroids = np.load(clip_dir / "centroids.npy")
-            extents = np.load(clip_dir / "extents.npy")
+            adjacency_matrices = np.load(clip_dir / "graph.npy")
+            print(f"adjacency_matrices: {adjacency_matrices.shape}")
+            centers = np.load(clip_dir / "c_centers.npy")
+            centroids = np.load(clip_dir / "c_centroids.npy")
+            extents = np.load(clip_dir / "c_extents.npy")
             
             return {
                 'node_feats': node_feats,
@@ -259,18 +196,6 @@ If multiple instruments are active simultaneously, list all triplets."""
         except Exception as e:
             print(f"Warning: Could not load graph data: {e}")
             return None
-    
-    def _process_vision_info(self, messages):
-        """Process vision info from messages (helper from Qwen2.5-VL docs)"""
-        image_inputs, video_inputs = [], []
-        for message in messages:
-            if isinstance(message["content"], list):
-                for ele in message["content"]:
-                    if ele.get("type") == "image":
-                        image_inputs.append(ele["image"])
-                    elif ele.get("type") == "video":
-                        video_inputs.append(ele["video"])
-        return image_inputs if image_inputs else None, video_inputs if video_inputs else None
     
     def _parse_response(self, response: str) -> List[Dict]:
         """Parse model response to extract triplets"""
@@ -289,10 +214,14 @@ If multiple instruments are active simultaneously, list all triplets."""
         
         return []
     
+    # TODO: adjust this
     def evaluate_sample(
         self, 
         sample: MultiFrameSample, 
-        condition: str
+        # TODO: have to change all of this; not a good way to do this (fix once we have more ablations)
+        condition: str,
+        prompt: str,
+        system_prompt: str = None
     ) -> Dict:
         """
         Evaluate a single sample under specified condition.
@@ -300,25 +229,28 @@ If multiple instruments are active simultaneously, list all triplets."""
         Args:
             sample: MultiFrameSample to evaluate
             condition: One of "single_frame", "multiframe", "multiframe_graph"
+            prompt: The main prompt/question for the task
+            system_prompt: Optional system prompt (used for multiframe_graph)
         """
+
+        print(f"calling evaluate sample for end frame {sample.end_frame}")
         
         # Build prompt
         if condition == "single_frame":
-            prompt = self._build_single_frame_prompt(sample.gt_triplets)
-            # Use middle frame
-            middle_idx = len(sample.image_paths) // 2
-            response = self._query_single_frame(sample.image_paths[middle_idx], prompt)
+            response = self._query_single_frame(sample.image_paths[sample.end_frame], prompt)
         elif condition == "multiframe":
-            prompt = self._build_multiframe_prompt(sample.gt_triplets)
-            response = self._query_multiframe(sample.image_paths, prompt)
+            response = self._query_multiframe(sample.image_paths[sample.start_frame:sample.end_frame + 1], prompt)
         elif condition == "multiframe_graph":
             if sample.graph_path is None:
                 print(f"Warning: No graph available for {sample.sample_id}, using multiframe")
-                prompt = self._build_multiframe_prompt(sample.gt_triplets)
-                response = self._query_multiframe(sample.image_paths, prompt)
+                response = self._query_multiframe(sample.image_paths[sample.start_frame:sample.end_frame + 1], prompt)
             else:
-                prompt = self._build_multiframe_prompt(sample.gt_triplets)
-                response = self._query_with_graph(sample.image_paths, sample.graph_path, prompt)
+                response = self._query_with_graph(
+                    sample.image_paths[sample.start_frame:sample.end_frame + 1], 
+                    sample.graph_path, 
+                    prompt,
+                    system_prompt=system_prompt
+                )
         else:
             raise ValueError(f"Unknown condition: {condition}")
         
@@ -380,7 +312,7 @@ If multiple instruments are active simultaneously, list all triplets."""
     def run_ablation_study(
         self, 
         samples: List[MultiFrameSample],
-        conditions: List[str] = None
+        ablations: List[str]
     ) -> Dict:
         """
         Run ablation study across multiple conditions.
@@ -390,52 +322,63 @@ If multiple instruments are active simultaneously, list all triplets."""
             conditions: List of conditions to test (default: all three)
         """
         
-        if conditions is None:
-            conditions = ["single_frame", "multiframe", "multiframe_graph"]
+        print(f"ablations: {ablations}")
         
         results = {
             'conditions': {},
             'samples': []
         }
         
-        for condition in conditions:
+        for ablation in ablations:
             print(f"\n{'='*80}")
-            print(f"CONDITION: {condition.upper()}")
+            print(f"ABLATION: {ablation.upper()}")
             print(f"{'='*80}\n")
             
-            condition_results = []
+            ablation_results = []
             
             for i, sample in enumerate(samples, 1):
                 print(f"[{i}/{len(samples)}] {sample.sample_id}...")
                 
-                result = self.evaluate_sample(sample, condition)
-                condition_results.append(result)
+                if ablation == "single_frame":
+                    prompt = self.config.triplets_config['single_frame_prompt']
+                    result = self.evaluate_sample(sample, ablation, prompt)
+                elif ablation == "multiframe":
+                    prompt = self.config.triplets_config['multiframe_prompt']
+                    result = self.evaluate_sample(sample, ablation, prompt)
+                elif ablation == "multiframe_graph":
+                    prompt = self.config.triplets_config['multiframe_graph_prompt']
+                    system_prompt = self.config.triplets_config.get('multiframe_graph_system_prompt', None)
+                    result = self.evaluate_sample(sample, ablation, prompt, system_prompt=system_prompt)
+                else:
+                    raise ValueError(f"Unknown ablation: {ablation}")
+                
+                ablation_results.append(result)
                 
                 # Print result
                 metrics = result['metrics']
                 status = "✓" if metrics['triplet'] else "✗"
                 print(f"  {status} I:{int(metrics['instrument'])} V:{int(metrics['verb'])} T:{int(metrics['target'])} Full:{int(metrics['triplet'])}")
             
-            # Compute aggregate metrics for this condition
-            n = len(condition_results)
+            # TODO: fix for quantitative metrics
+            n = len(ablation_results)
             metrics = {
-                'instrument_acc': sum(r['metrics']['instrument'] for r in condition_results) / n,
-                'verb_acc': sum(r['metrics']['verb'] for r in condition_results) / n,
-                'target_acc': sum(r['metrics']['target'] for r in condition_results) / n,
-                'triplet_acc': sum(r['metrics']['triplet'] for r in condition_results) / n,
+                'instrument_acc': sum(r['metrics']['instrument'] for r in ablation_results) / n,
+                'verb_acc': sum(r['metrics']['verb'] for r in ablation_results) / n,
+                'target_acc': sum(r['metrics']['target'] for r in ablation_results) / n,
+                'triplet_acc': sum(r['metrics']['triplet'] for r in ablation_results) / n,
                 'num_samples': n
             }
             
-            results['conditions'][condition] = {
+            results['conditions'][ablation] = {
                 'metrics': metrics,
-                'results': condition_results
+                'results': ablation_results
             }
             
-            print(f"\nCondition Metrics:")
-            print(f"  Instrument: {metrics['instrument_acc']:.1%}")
-            print(f"  Verb: {metrics['verb_acc']:.1%}")
-            print(f"  Target: {metrics['target_acc']:.1%}")
-            print(f"  Full Triplet: {metrics['triplet_acc']:.1%}")
+            # print(f"\nCondition Metrics:")
+            # print(f"  Instrument: {metrics['instrument_acc']:.1%}")
+            # print(f"  Verb: {metrics['verb_acc']:.1%}")
+            # print(f"  Target: {metrics['target_acc']:.1%}")
+            # print(f"  Full Triplet: {metrics['triplet_acc']:.1%}")
         
         return results
     
