@@ -7,6 +7,7 @@ import hydra
 from benchmark.benchmark_config import BenchmarkConfig
 from benchmark.frame_selectors import TripletsFrameSelector
 from benchmark.frame_evaluators import TripletsFrameEvaluator
+from benchmark.temporal_evaluator import TemporalFrameEvaluator
 from benchmark.spatial import (
     get_patched_qwen_for_spatial_grounding,
     extract_text_to_vision_attention,
@@ -78,34 +79,92 @@ def _build_benchmark_config(cfg: DictConfig, clip: DictConfig) -> BenchmarkConfi
 
 
 def evaluate_triplets(clip: DictConfig, cfg: DictConfig):
-    # skip this if no eval config is set
-    if cfg.eval is None or cfg.eval.triplets is None:
+    """Run triplet recognition evaluation for a single clip."""
+    bench_cfg = _build_benchmark_config(cfg, clip)
+
+    # =========================================================================
+    # TRIPLETS EVALUATION
+    # =========================================================================
+    if bench_cfg.triplets_config is None:
         return
 
-    bench_cfg = _build_benchmark_config(cfg, clip)
+    print(f"\n{'='*80}")
+    print(f"TRIPLETS EVALUATION: {clip.name}")
+    print(f"{'='*80}")
+
     selector = TripletsFrameSelector(bench_cfg)
     samples = selector.select_sequences()
     if not samples:
         print("ERROR: No samples selected! Check if preprocessed data is available.")
         return
+
     selector.print_summary(samples)
 
     evaluator = TripletsFrameEvaluator(bench_cfg)
     results = evaluator.run_ablation_study(
-        samples,
-        ablations=bench_cfg.triplets_config["ablations"],  # type: ignore[index]
+        samples, ablations=bench_cfg.triplets_config["ablations"]  # type: ignore[index]
     )
 
     # Save to required output dir
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(cfg.eval.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_file = out_dir / f"{clip.name}_ablation_{ts}.json"
+    out_file = out_dir / f"{clip.name}_triplet_ablation_{ts}.json"
     evaluator.save_results(results, out_file)
 
 
 def evaluate_temporal(clip: DictConfig, cfg: DictConfig):
-    pass
+    """Run temporal action localization evaluation for a single clip."""
+    bench_cfg = _build_benchmark_config(cfg, clip)
+
+    # =========================================================================
+    # TEMPORAL EVALUATION
+    # =========================================================================
+    if bench_cfg.temporal_config is None:
+        return
+
+    print(f"\n{'='*80}")
+    print(f"TEMPORAL EVALUATION: {clip.name}")
+    print(f"{'='*80}")
+
+    # Check if clip has temporal annotations specified
+    if not hasattr(clip, "temporal_eval_file") or clip.temporal_eval_file is None:
+        print(f"No temporal_eval_file specified for clip {clip.name}")
+        print("Skipping temporal evaluation for this clip.")
+        print(
+            "To enable, add 'temporal_eval_file: path/to/annotations.json' to clip config"
+        )
+        return
+
+    # Load temporal annotations from JSON file specified in clip config
+    temporal_anno_file = Path(clip.temporal_eval_file)
+    if not temporal_anno_file.exists():
+        print(f"ERROR: Temporal annotations not found: {temporal_anno_file}")
+        print("Skipping temporal evaluation for this clip.")
+        return
+
+    import json
+
+    with open(temporal_anno_file) as f:
+        temporal_data = json.load(f)
+
+    print(
+        f"Loaded {len(temporal_data['annotations'])} temporal queries from {temporal_anno_file}"
+    )
+
+    # Run temporal evaluation
+    evaluator = TemporalFrameEvaluator(bench_cfg)
+    results = evaluator.run_temporal_benchmark(
+        annotations=temporal_data["annotations"],
+        ablations=bench_cfg.temporal_config["ablations"],
+    )
+
+    # Save results
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = Path(cfg.eval.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_file = out_dir / f"{clip.name}_temporal_{ts}.json"
+    evaluator.save_results(results, out_file)
 
 
 def get_timestep_from_frame(frame: str, image_dir: Path) -> int:
