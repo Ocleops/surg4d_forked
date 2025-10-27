@@ -4,6 +4,8 @@ from pathlib import Path
 from omegaconf import OmegaConf
 import torch
 import gc
+import random
+import numpy as np
 
 from benchmark.spatial import get_patched_qwen_for_spatial_grounding
 from preprocess import process_clip
@@ -45,6 +47,10 @@ def _get_qwen_loader(cfg) -> Callable[[], tuple]:
 
 
 def main():
+    # seed everything
+    torch.manual_seed(42)
+    np.random.seed(42)
+    random.seed(42)
     # do hydra init manually here to avoid conflicts with vipe hydra
     config_dir = Path(__file__).parent / "conf"
     with hydra.initialize_config_dir(
