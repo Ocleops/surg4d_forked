@@ -24,6 +24,7 @@ from qwen_vl_utils import process_vision_info
 
 #TODO: change "field of view" query focus for video01_16345 (does not make sense for graph)
 #TODO: not graph for every frame -> map graph to frames via timestamps in graphs!
+#TODO: discussion with Nico -> ask for time frames instead of frame numbers and use stride 4 for graphs (20 graphs for 80 frames)
 class TemporalFrameEvaluator:
     """Evaluator for temporal action localization"""
     
