@@ -166,7 +166,7 @@ def square_crop_image(image: Image.Image, xslide=0, yslide=0):
 def get_patched_qwen(
     use_bnb_4bit: bool = True,
     use_bnb_8bit: bool = False,
-    attn_implementation: str = "sdpa", # "flash_attention_2" or "sdpa"
+    attn_implementation: str = "sdpa",  # "flash_attention_2" or "sdpa"
     torch_dtype: torch.dtype = torch.bfloat16,
     device_map: Union[str, Dict[str, str]] = "auto",
     max_memory: Optional[Dict[str, str]] = {0: "18.0GB", "cpu": "46.0GB"},
@@ -320,7 +320,7 @@ def ask_qwen_about_image(
     prompt: str,
     model: Qwen2_5_VLForConditionalGeneration,
     processor: Qwen2_5_VLProcessor,
-    system_prompt: str = "You are a medical assistant designed to aid medical practitioners during a cholecystectomy procedure. The surgeon user will ask you a question and show you their current situation, and you give a concise answer."
+    system_prompt: str = "You are a medical assistant designed to aid medical practitioners during a cholecystectomy procedure. The surgeon user will ask you a question and show you their current situation, and you give a concise answer.",
 ):
     messages = [
         {
@@ -482,7 +482,13 @@ def prompt_with_graph(
     processor: Qwen2_5_VLProcessor,
     system_prompt: str = None,
 ):
-    assert len(adjacency_matrices) == len(node_centers) == len(node_centroids) == len(node_extents), "timestep mismatch"
+    assert all(len(feat.shape) == 2 for feat in node_feats), "node_feats must be list of tensors with shape (n_features, dim_feature)"
+    assert (
+        len(adjacency_matrices)
+        == len(node_centers)
+        == len(node_centroids)
+        == len(node_extents)
+    ), "timestep mismatch"
 
     if system_prompt is None:
         system_prompt = """
@@ -513,20 +519,22 @@ def prompt_with_graph(
 
     object_content = []
     for i in range(len(node_feats)):
-        object_content.extend([
-            {
-                "type": "text",
-                "text": f'<object id="{i}">',
-            },
-            {
-                "type": "image",
-                "image": None,
-            },
-            {
-                "type": "text",
-                "text": "</object>\n",
-            }
-        ])
+        object_content.extend(
+            [
+                {
+                    "type": "text",
+                    "text": f'<object id="{i}">',
+                },
+                {
+                    "type": "image",
+                    "image": None,
+                },
+                {
+                    "type": "text",
+                    "text": "</object>\n",
+                },
+            ]
+        )
 
     graph_content = []
     for t in range(len(adjacency_matrices)):
@@ -538,28 +546,30 @@ def prompt_with_graph(
             }
         )
         for n in range(A.shape[0]):
-            graph_content.extend([
-                {
-                    "type": "text",
-                    "text": f'<node id="{n}">\n',
-                },
-                {
-                    "type": "text",
-                    "text": f'<center x="{node_centers[t][n][0]:.2f}" y="{node_centers[t][n][1]:.2f}" z="{node_centers[t][n][2]:.2f}"/>\n',
-                },
-                {
-                    "type": "text",
-                    "text": f'<centroid x="{node_centroids[t][n][0]:.2f}" y="{node_centroids[t][n][1]:.2f}" z="{node_centroids[t][n][2]:.2f}"/>\n',
-                },
-                {
-                    "type": "text",
-                    "text": f'<extent x="{node_extents[t][n][0]:.2f}" y="{node_extents[t][n][1]:.2f}" z="{node_extents[t][n][2]:.2f}"/>\n',
-                },
-                {
-                    "type": "text",
-                    "text": '</node>\n',
-                }
-            ])
+            graph_content.extend(
+                [
+                    {
+                        "type": "text",
+                        "text": f'<node object-id="{n}">\n',
+                    },
+                    {
+                        "type": "text",
+                        "text": f'<center x="{node_centers[t][n][0]:.2f}" y="{node_centers[t][n][1]:.2f}" z="{node_centers[t][n][2]:.2f}"/>\n',
+                    },
+                    {
+                        "type": "text",
+                        "text": f'<centroid x="{node_centroids[t][n][0]:.2f}" y="{node_centroids[t][n][1]:.2f}" z="{node_centroids[t][n][2]:.2f}"/>\n',
+                    },
+                    {
+                        "type": "text",
+                        "text": f'<extent x="{node_extents[t][n][0]:.2f}" y="{node_extents[t][n][1]:.2f}" z="{node_extents[t][n][2]:.2f}"/>\n',
+                    },
+                    {
+                        "type": "text",
+                        "text": "</node>\n",
+                    },
+                ]
+            )
         for n in range(A.shape[0]):
             for m in range(A.shape[1]):
                 if A[n, m] > 0:
@@ -572,10 +582,10 @@ def prompt_with_graph(
         graph_content.append(
             {
                 "type": "text",
-                "text": '</spatial-graph>\n',
+                "text": "</spatial-graph>\n",
             }
         )
-    # TODO: adapt question and system_prompt 
+    # TODO: adapt question and system_prompt
     messages = [
         {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
         {
@@ -589,15 +599,15 @@ def prompt_with_graph(
                 *graph_content,
                 {"type": "text", "text": "</spatial-graphs>\n"},
                 {"type": "text", "text": "</scene-graph>\n"},
-                {"type": "text", "text": '<question>'},
+                {"type": "text", "text": "<prompt>"},
                 {"type": "text", "text": question},
-                {"type": "text", "text": "</question>\n"},
+                {"type": "text", "text": "</prompt>\n"},
                 {"type": "text", "text": "\nYour response:\n"},
             ],
         },
     ]
 
-    with open('qwen_messages.json', 'w') as fp:
+    with open("qwen_messages.json", "w") as fp:
         json.dump(messages, fp)
 
     # print(f"messages: {messages}")
@@ -606,6 +616,133 @@ def prompt_with_graph(
     return generate_with_vision_features(
         messages=messages,
         vision_features=[torch.Tensor(f) for f in node_feats],
+        model=model,
+        processor=processor,
+        # TODO: increase this?
+        max_tokens=5012,
+    )
+
+
+def prompt_with_dynamic_graph(
+    question: str,
+    node_feats: List[np.ndarray],
+    adjacency_matrices: np.ndarray,
+    node_centers: np.ndarray,
+    node_centroids: np.ndarray,
+    node_extents: np.ndarray,
+    model: Qwen2_5_VLForConditionalGeneration,
+    processor: Qwen2_5_VLProcessor,
+    system_prompt: str,
+):
+    assert all(len(feat.shape) == 3 for feat in node_feats), "node_feats must be list of tensors with shape (n_timesteps, n_features, dim_feature)"
+    assert (
+        len(adjacency_matrices)
+        == len(node_centers)
+        == len(node_centroids)
+        == len(node_extents)
+    ), "timestep mismatch"
+    object_content = []
+    for i in range(len(node_feats)):
+        object_content.extend([])
+
+    graph_content = []
+    for t in range(len(adjacency_matrices)):
+        A = adjacency_matrices[t]
+        graph_content.append(
+            {
+                "type": "text",
+                "text": f'<spatial-graph t="{t}">\n',
+            }
+        )
+        for n in range(A.shape[0]):
+            graph_content.extend(
+                [
+                    {
+                        "type": "text",
+                        "text": f'<node id="{n}">\n',
+                    },
+                    {
+                        "type": "text",
+                        "text": "<descriptor>",
+                    },
+                    {
+                        "type": "image",
+                        "image": None,
+                    },
+                    {
+                        "type": "text",
+                        "text": "</descriptor>\n",
+                    },
+                    {
+                        "type": "text",
+                        "text": f'<center x="{node_centers[t][n][0]:.2f}" y="{node_centers[t][n][1]:.2f}" z="{node_centers[t][n][2]:.2f}"/>\n',
+                    },
+                    {
+                        "type": "text",
+                        "text": f'<centroid x="{node_centroids[t][n][0]:.2f}" y="{node_centroids[t][n][1]:.2f}" z="{node_centroids[t][n][2]:.2f}"/>\n',
+                    },
+                    {
+                        "type": "text",
+                        "text": f'<extent x="{node_extents[t][n][0]:.2f}" y="{node_extents[t][n][1]:.2f}" z="{node_extents[t][n][2]:.2f}"/>\n',
+                    },
+                    {
+                        "type": "text",
+                        "text": "</node>\n",
+                    },
+                ]
+            )
+        for n in range(A.shape[0]):
+            for m in range(A.shape[1]):
+                if A[n, m] > 0:
+                    graph_content.append(
+                        {
+                            "type": "text",
+                            "text": f'<edge from="{n}" to="{m}" dist="{A[n, m]:.2f}"/>\n',
+                        }
+                    )
+        graph_content.append(
+            {
+                "type": "text",
+                "text": "</spatial-graph>\n",
+            }
+        )
+    # TODO: adapt question and system_prompt
+    messages = [
+        {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "<scene-graph>\n"},
+                {"type": "text", "text": "<objects>\n"},
+                *object_content,
+                {"type": "text", "text": "</objects>\n"},
+                {"type": "text", "text": "<spatial-graphs>\n"},
+                *graph_content,
+                {"type": "text", "text": "</spatial-graphs>\n"},
+                {"type": "text", "text": "</scene-graph>\n"},
+                {"type": "text", "text": "<prompt>"},
+                {"type": "text", "text": question},
+                {"type": "text", "text": "</prompt>\n"},
+                {"type": "text", "text": "\nYour response:\n"},
+            ],
+        },
+    ]
+
+    with open("qwen_messages.json", "w") as fp:
+        json.dump(messages, fp)
+
+    # print(f"messages: {messages}")
+    print(f"shape of node_feats: {len(node_feats)}")
+
+    feature_list = []
+    for t in range(len(node_feats)):
+        for n in range(node_feats[t].shape[0]):
+            feature_list.append(torch.Tensor(node_feats[n][t]))
+
+    # TODO include l2 distances on edges as well
+    return generate_with_vision_features(
+        messages=messages,
+        vision_features=feature_list,
         model=model,
         processor=processor,
         # TODO: increase this?
@@ -636,12 +773,20 @@ def get_patch_segmasks(im_height, im_width):
     # )
     # patch_coords = torch.floor_divide(rowcol, EFFECTIVE_PATCH_SIZE)
     # return patch_coords[0] * patches_width + patch_coords[1]
-    patches_height = im_height // EFFECTIVE_PATCH_SIZE + ((im_height // PATCH_SIZE) % 4 == 3) # cursed behavior
-    patches_width = im_width // EFFECTIVE_PATCH_SIZE + ((im_width // PATCH_SIZE) % 4 == 3)    # -,,-
+    patches_height = im_height // EFFECTIVE_PATCH_SIZE + (
+        (im_height // PATCH_SIZE) % 4 == 3
+    )  # cursed behavior
+    patches_width = im_width // EFFECTIVE_PATCH_SIZE + (
+        (im_width // PATCH_SIZE) % 4 == 3
+    )  # -,,-
     rowcol = torch.stack(
         torch.meshgrid(
-            torch.arange(patches_height * EFFECTIVE_PATCH_SIZE + ((im_height // PATCH_SIZE) % 4 == 3) * PATCH_SIZE),
-            torch.arange(patches_width * EFFECTIVE_PATCH_SIZE) + ((im_width // PATCH_SIZE) % 4 == 3) * PATCH_SIZE,
+            torch.arange(
+                patches_height * EFFECTIVE_PATCH_SIZE
+                + ((im_height // PATCH_SIZE) % 4 == 3) * PATCH_SIZE
+            ),
+            torch.arange(patches_width * EFFECTIVE_PATCH_SIZE)
+            + ((im_width // PATCH_SIZE) % 4 == 3) * PATCH_SIZE,
             indexing="ij",
         )
     )
