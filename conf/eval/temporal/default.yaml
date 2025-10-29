@@ -7,6 +7,15 @@
 # Ablations to run (similar to triplets evaluation)
 ablations: ["multiframe", "multiframe_graph"]
 
+# Ground-truth temporal labels location (no preprocessing required)
+# The evaluator will construct file paths as:
+#   ${eval.temporal.labels_root}/${clip.name}_temporal.json
+labels_root: data/temporal_labels
+labels_filename_template: "{clip_name}_temporal.json"
+
+# Where to dump per-clip prediction files during eval
+output_dir: ${eval.output_dir}/temporal
+
 # ============================================================================
 # EVALUATION METRICS - Category-specific metric configurations
 # ============================================================================
@@ -86,65 +95,161 @@ system_prompt: |
 # ============================================================================
 # BASE PROMPT - Template for all temporal queries (video-only ablation)
 # ============================================================================
-base_prompt: |
-  You are an expert visceral surgeon analyzing a cholecystectomy video sequence.
-  
-  YOUR TASK: Answer the following temporal question about when specific actions or events occur.
-  
-  VIDEO INFORMATION:
-  - Total frames: {num_frames}
-  - Frame range: frame_000000 to frame_{last_frame:06d}
-  - Frames are numbered sequentially starting from 0
-  
-  CRITICAL RULES:
-  1. Carefully observe the video frames to identify when actions/events occur
-  2. ONLY report timings you are confident about based on visual evidence
-  3. Use frame numbers to specify timing (e.g., frame 25, frames 10-30)
-  4. If you cannot determine the timing with confidence, state this clearly
-  5. DO NOT guess or infer based on typical procedures - use only what you see
-  
-  QUESTION: {question}
-  
-  ANSWER FORMAT: {answer_format}
-  
-  RESPONSE STRUCTURE:
-  1. First, describe what you observe across the frames relevant to the question
-  2. Then, provide your answer in the exact format specified above
-  3. Finally, state your confidence level (high/medium/low)
+## per-task prompts for video-only ablation below
+
+# Task-specific prompts for video-only ablation
+base_prompts:
+  action_onset: |
+    You are an expert visceral surgeon analyzing a cholecystectomy video sequence.
+
+    YOUR TASK: Identify the frame when the specified action first starts.
+
+    The video has {num_frames} frames, numbered 0..{last_frame}.
+
+    QUESTION: {question}
+
+    ANSWER FORMAT: {answer_format}
+
+    You may briefly reason first. Then, on a new line at the end, output ONLY a final JSON object: {{"frame": <int>}}
+
+  action_offset: |
+    You are an expert visceral surgeon analyzing a cholecystectomy video sequence.
+
+    YOUR TASK: Identify the frame when the specified action ends.
+
+    The video has {num_frames} frames, numbered 0..{last_frame}.
+
+    QUESTION: {question}
+
+    ANSWER FORMAT: {answer_format}
+
+    You may briefly reason first. Then, on a new line at the end, output ONLY a final JSON object: {{"frame": <int>}}
+
+  action_duration: |
+    You are an expert visceral surgeon analyzing a cholecystectomy video sequence.
+
+    YOUR TASK: Identify the frame range(s) during which the specified action occurs.
+
+    The video has {num_frames} frames, numbered 0..{last_frame}.
+
+    QUESTION: {question}
+
+    ANSWER FORMAT: {answer_format}
+
+    You may briefly reason first. Then, on a new line at the end, output ONLY a final JSON object: {{"ranges": [[<int>, <int>], ...]}}
+
+  multiple_event_ordering: |
+    You are an expert visceral surgeon analyzing a cholecystectomy video sequence.
+
+    YOUR TASK: Determine the order of multiple events and provide frame ranges for each.
+
+    The video has {num_frames} frames, numbered 0..{last_frame}.
+
+    QUESTION: {question}
+
+    ANSWER FORMAT: {answer_format}
+
+    You may briefly reason first. Then, on a new line at the end, output ONLY a final JSON object: {{"events": [{{"order": <int>, "frame_range": [<int>, <int>]}}]}}
+
+  count_frequency: |
+    You are an expert visceral surgeon analyzing a cholecystectomy video sequence.
+
+    YOUR TASK: Count how many times the specified action occurs and give frame ranges for occurrences.
+
+    The video has {num_frames} frames, numbered 0..{last_frame}.
+
+    QUESTION: {question}
+
+    ANSWER FORMAT: {answer_format}
+
+    You may briefly reason first. Then, on a new line at the end, output ONLY a final JSON object: {{"count": <int>, "occurrences": [[<int>, <int>], ...]}}
 
 # ============================================================================
 # GRAPH-ENHANCED PROMPT - For multiframe_graph ablation
 # ============================================================================
-graph_prompt: |
-  You are an expert visceral surgeon analyzing both a cholecystectomy video AND its scene graph.
-  
-  YOUR TASK: Answer the following temporal question by leveraging both visual and spatial-temporal graph information.
-  
-  VIDEO INFORMATION:
-  - Total frames: {num_frames}
-  - Frame range: frame_000000 to frame_{last_frame:06d}
-  - Frames are numbered sequentially starting from 0
-  
-  GRAPH INFORMATION:
-  - You have access to a 4D scene graph showing objects and their spatial relationships over time
-  - Use edge distances to detect when objects interact (small distance = interaction)
-  - Use node positions to track motion and detect when objects appear/disappear
-  - Use temporal changes in the graph to precisely identify when events occur
-  
-  REASONING STRATEGY:
-  1. Examine the scene graph to identify relevant objects (instruments, anatomy)
-  2. Track spatial relationships (edges) and positions (nodes) across timesteps
-  3. Identify when significant changes occur (threshold crossings, appearance/disappearance)
-  4. Verify your graph-based findings with the visual appearance of objects
-  5. Map timesteps back to frame numbers for your answer
-  
-  QUESTION: {question}
-  
-  ANSWER FORMAT: {answer_format}
-  
-  RESPONSE STRUCTURE:
-  1. Describe relevant objects and their relationships in the graph
-  2. Explain what temporal changes you observed in the graph
-  3. Provide your answer in the exact format specified above
-  4. State your confidence level (high/medium/low)
+## per-task prompts for graph ablation below
+
+# Task-specific prompts for graph ablation
+graph_prompts:
+  action_onset: |
+    You are an expert visceral surgeon analyzing both a cholecystectomy video AND its scene graph.
+
+    YOUR TASK: Identify the frame when the specified action first starts, leveraging temporal changes in the scene graph.
+
+    The graph has {num_frames} timesteps, numbered 0..{last_frame}.
+
+    GRAPH INFORMATION:
+    - Use edge distances to detect interactions (smaller = interaction)
+    - Use node positions to detect approach/separation
+
+    QUESTION: {question}
+
+    ANSWER FORMAT: {answer_format}
+
+    You may briefly reason first. Then, on a new line at the end, output ONLY a final JSON object: {{"frame": <int>}}
+
+  action_offset: |
+    You are an expert visceral surgeon analyzing both a cholecystectomy video AND its scene graph.
+
+    YOUR TASK: Identify the frame when the specified action ends, leveraging temporal changes in the scene graph.
+
+    The graph has {num_frames} timesteps, numbered 0..{last_frame}.
+
+    GRAPH INFORMATION:
+    - Use increases in edge distances to detect separation (end of interaction)
+    - Use node positions to confirm disappearance/separation
+
+    QUESTION: {question}
+
+    ANSWER FORMAT: {answer_format}
+
+    You may briefly reason first. Then, on a new line at the end, output ONLY a final JSON object: {{"frame": <int>}}
+
+  action_duration: |
+    You are an expert visceral surgeon analyzing both a cholecystectomy video AND its scene graph.
+
+    YOUR TASK: Identify the frame range(s) during which the specified action occurs, leveraging temporal changes in the scene graph.
+
+    The graph has {num_frames} timesteps, numbered 0..{last_frame}.
+
+    GRAPH INFORMATION:
+    - Small, stable edge distances indicate ongoing interaction; decreasing distances indicate onset, increasing indicate offset
+
+    QUESTION: {question}
+
+    ANSWER FORMAT: {answer_format}
+
+    You may briefly reason first. Then, on a new line at the end, output ONLY a final JSON object: {{"ranges": [[<int>, <int>], ...]}}
+
+  multiple_event_ordering: |
+    You are an expert visceral surgeon analyzing both a cholecystectomy video AND its scene graph.
+
+    YOUR TASK: Determine the order of multiple events and provide frame ranges for each, using the scene graph.
+
+    The graph has {num_frames} timesteps, numbered 0..{last_frame}.
+
+    GRAPH INFORMATION:
+    - Use changes in edge distances and node positions to segment events and assign ranges
+
+    QUESTION: {question}
+
+    ANSWER FORMAT: {answer_format}
+
+    You may briefly reason first. Then, on a new line at the end, output ONLY a final JSON object: {{"events": [{{"order": <int>, "frame_range": [<int>, <int>]}}]}}
+
+  count_frequency: |
+    You are an expert visceral surgeon analyzing both a cholecystectomy video AND its scene graph.
+
+    YOUR TASK: Count how many times the specified action occurs and give frame ranges for occurrences, using the scene graph.
+
+    The graph has {num_frames} timesteps, numbered 0..{last_frame}.
+
+    GRAPH INFORMATION:
+    - Use recurring segments of small edge distances as occurrences; map them to frame ranges
+
+    QUESTION: {question}
+
+    ANSWER FORMAT: {answer_format}
+
+    You may briefly reason first. Then, on a new line at the end, output ONLY a final JSON object: {{"count": <int>, "occurrences": [[<int>, <int>], ...]}}
 

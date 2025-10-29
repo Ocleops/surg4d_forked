@@ -505,34 +505,6 @@ def prompt_with_static_graph(
     node_feat_indices = sorted(list(node_feats.keys()), key=lambda x: int(x))
     node_feats = [node_feats[idx] for idx in node_feat_indices]
     node_feats = [i[node_feats_timestep_idx] for i in node_feats]
-
-    if system_prompt is None:
-        system_prompt = """
-        You are an assistant that answers questions about scene graphs.
-        
-        A scene graph represents a 3D scene through time as
-        a list of graphs, where each graphs corresponds to a
-        timestep.
-        Each graph contains a set of nodes and edges.
-        Each node corresponds to an object present in the scene,
-        and associated properties like its position, extent,
-        etc. at the respective timestep.
-        Edge weights correspond to distances between objects
-        at the respective timestep.
-        Each object is represented by an image of the
-        object.
-        The scene graph as a whole is given as a list of
-        objects followed by a list of graphs.
-
-        You will be given a scene graph and a question by the user.
-        You answer the question ONLY based on the scene graph
-        and context provided by this system prompt.
-
-        You answer with nothing but the response to the question.
-        You keep the response as concise as possible, while
-        answering all aspects the question.
-        """
-
     object_content = []
     for i in range(len(node_feats)):
         object_content.extend(
@@ -570,10 +542,6 @@ def prompt_with_static_graph(
                     },
                     {
                         "type": "text",
-                        "text": f'<center x="{node_centers[t][n][0]:.2f}" y="{node_centers[t][n][1]:.2f}" z="{node_centers[t][n][2]:.2f}"/>\n',
-                    },
-                    {
-                        "type": "text",
                         "text": f'<centroid x="{node_centroids[t][n][0]:.2f}" y="{node_centroids[t][n][1]:.2f}" z="{node_centroids[t][n][2]:.2f}"/>\n',
                     },
                     {
@@ -592,7 +560,7 @@ def prompt_with_static_graph(
                     graph_content.append(
                         {
                             "type": "text",
-                            "text": f'<edge from="{n}" to="{m}" dist="{A[n, m]:.2f}"/>\n',
+                            "text": f'<edge from="{n}" to="{m}" overlap_score="{A[n, m]:.2f}" centroid_distance="{np.linalg.norm(node_centroids[t][n] - node_centroids[t][m]):.2f}"/>\n',
                         }
                     )
         graph_content.append(

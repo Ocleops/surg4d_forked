@@ -122,7 +122,12 @@ def evaluate_triplets(clip: DictConfig, cfg: DictConfig):
     evaluator.save_results(results, out_file)
 
 
-def evaluate_temporal(clip: DictConfig, cfg: DictConfig):
+def evaluate_temporal(
+    clip: DictConfig,
+    cfg: DictConfig,
+    model: Qwen2_5_VLForConditionalGeneration,
+    processor: Qwen2_5_VLProcessor,
+):
     """Run temporal action localization evaluation for a single clip."""
     if cfg.eval is None or cfg.eval.temporal is None:
         return
@@ -136,20 +141,22 @@ def evaluate_temporal(clip: DictConfig, cfg: DictConfig):
     print(f"TEMPORAL EVALUATION: {clip.name}")
     print(f"{'=' * 80}")
 
-    # Check if clip has temporal annotations specified
-    if not hasattr(clip, "temporal_eval_file") or clip.temporal_eval_file is None:
-        print(f"No temporal_eval_file specified for clip {clip.name}")
-        print("Skipping temporal evaluation for this clip.")
-        print(
-            "To enable, add 'temporal_eval_file: path/to/annotations.json' to clip config"
-        )
-        return
+    # Resolve temporal annotations file
+    # Priority: clip.temporal_eval_file (override) -> eval.temporal.labels_root/template
+    temporal_anno_file: Path
+    if hasattr(clip, "temporal_eval_file") and clip.temporal_eval_file is not None:
+        temporal_anno_file = Path(clip.temporal_eval_file)
+    else:
+        # Build from Hydra config (no preprocessing required)
+        temporal_labels_root = Path(cfg.eval.temporal.get("labels_root", "data/temporal_labels"))
+        filename_template = cfg.eval.temporal.get("labels_filename_template", "{clip_name}_temporal.json")
+        temporal_anno_file = temporal_labels_root / filename_template.format(clip_name=str(clip.name))
 
-    # Load temporal annotations from JSON file specified in clip config
-    temporal_anno_file = Path(clip.temporal_eval_file)
+    # Load temporal annotations from resolved path
     if not temporal_anno_file.exists():
         print(f"ERROR: Temporal annotations not found: {temporal_anno_file}")
         print("Skipping temporal evaluation for this clip.")
+        print("Provide 'temporal_eval_file' in clip config or place labels under eval.temporal.labels_root.")
         return
 
     import json
@@ -177,7 +184,7 @@ def evaluate_temporal(clip: DictConfig, cfg: DictConfig):
     )
 
     # Run temporal evaluation
-    evaluator = TemporalFrameEvaluator(bench_cfg)
+    evaluator = TemporalFrameEvaluator(bench_cfg, model=model, processor=processor)
 
     # Check if evaluator was initialized successfully
     if evaluator.num_frames == 0:
@@ -189,12 +196,27 @@ def evaluate_temporal(clip: DictConfig, cfg: DictConfig):
         ablations=bench_cfg.temporal_config["ablations"],
     )
 
-    # Save results
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = Path(cfg.eval.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_file = out_dir / f"{clip.name}_temporal_{ts}.json"
-    evaluator.save_results(results, out_file)
+    # Convert to prediction dump analogous to spatial eval
+    preds_by_ablation: dict[str, list[dict]] = {}
+    for ablation, payload in results.get("ablations", {}).items():
+        ablation_results = payload.get("results", [])
+        preds_by_ablation[ablation] = [
+            {
+                "query_id": r.get("query_id"),
+                "query_type": r.get("query_type"),
+                "question": r.get("question"),
+                "predicted": r.get("predicted"),
+                "raw_response": r.get("raw_response"),
+            }
+            for r in ablation_results
+        ]
+
+    # Save per-clip predictions for compute_metrics stage
+    pred_out_dir = Path(cfg.eval.temporal.output_dir)
+    pred_out_dir.mkdir(parents=True, exist_ok=True)
+    pred_out_file = pred_out_dir / f"{clip.name}.json"
+    with pred_out_file.open("w") as f:
+        json.dump({"clip": clip.name, "ablations": preds_by_ablation}, f, indent=2)
 
 
 def get_timestep_from_frame(frame: str, image_dir: Path) -> int:
@@ -422,7 +444,7 @@ def main(cfg: DictConfig):
 
     for clip in tqdm(cfg.clips, desc="Evaluating clips", unit="clip"):
         evaluate_triplets(clip, cfg)
-        evaluate_temporal(clip, cfg)
+        evaluate_temporal(clip, cfg, model=model, processor=processor)
         evaluate_spatial(
             clip=clip,
             cfg=cfg,
