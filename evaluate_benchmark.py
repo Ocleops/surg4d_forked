@@ -1,7 +1,6 @@
 import gc
 import json
 from pathlib import Path
-from datetime import datetime
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 import hydra
@@ -79,7 +78,12 @@ def _build_benchmark_config(cfg: DictConfig, clip: DictConfig) -> BenchmarkConfi
     return bench_cfg
 
 
-def evaluate_triplets(clip: DictConfig, cfg: DictConfig):
+def evaluate_triplets(
+    clip: DictConfig,
+    cfg: DictConfig,
+    model: Qwen2_5_VLForConditionalGeneration,
+    processor: Qwen2_5_VLProcessor,
+):
     """Run triplet recognition evaluation for a single clip."""
     if cfg.eval is None or cfg.eval.triplets is None:
         return
@@ -108,18 +112,35 @@ def evaluate_triplets(clip: DictConfig, cfg: DictConfig):
 
     selector.print_summary(samples)
 
-    evaluator = TripletsFrameEvaluator(bench_cfg)
+    evaluator = TripletsFrameEvaluator(bench_cfg, model=model, processor=processor)
     results = evaluator.run_ablation_study(
         samples,
         ablations=bench_cfg.triplets_config["ablations"],  # type: ignore[index]
     )
 
-    # Save to required output dir
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = Path(cfg.eval.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_file = out_dir / f"{clip.name}_triplet_ablation_{ts}.json"
-    evaluator.save_results(results, out_file)
+    # Convert to prediction dump analogous to temporal eval
+    preds_by_ablation: dict[str, list[dict]] = {}
+    for ablation, payload in results.get("conditions", {}).items():
+        ablation_results = payload.get("results", [])
+        preds_by_ablation[ablation] = [
+            {
+                "sample_id": r.get("sample_id"),
+                "video_id": r.get("video_id"),
+                "clip_start": r.get("clip_start"),
+                "end_frame": r.get("end_frame"),
+                "second_idx": r.get("second_idx"),
+                "predicted": r.get("predicted_triplets", []),
+                "raw_response": r.get("response"),
+            }
+            for r in ablation_results
+        ]
+
+    # Save per-clip predictions for compute_metrics stage
+    pred_out_dir = Path(cfg.eval.triplets.output_dir)
+    pred_out_dir.mkdir(parents=True, exist_ok=True)
+    pred_out_file = pred_out_dir / f"{clip.name}.json"
+    with pred_out_file.open("w") as f:
+        json.dump({"clip": clip.name, "ablations": preds_by_ablation}, f, indent=2)
 
 
 def evaluate_temporal(
@@ -434,16 +455,16 @@ def evaluate_spatial(
 @hydra.main(config_path="conf", config_name="config.yaml", version_base="1.3")
 def main(cfg: DictConfig):
     model, processor = get_patched_qwen(
-        use_bnb_4bit=cfg.eval.spatial.use_bnb_4bit,
-        use_bnb_8bit=cfg.eval.spatial.use_bnb_8bit,
+        use_bnb_4bit=cfg.eval.use_bnb_4bit,
+        use_bnb_8bit=cfg.eval.use_bnb_8bit,
     )
     model_spatial, processor_spatial = get_patched_qwen_for_spatial_grounding(
-        use_bnb_4bit=cfg.eval.spatial.use_bnb_4bit,
-        use_bnb_8bit=cfg.eval.spatial.use_bnb_8bit,
+        use_bnb_4bit=cfg.eval.use_bnb_4bit,
+        use_bnb_8bit=cfg.eval.use_bnb_8bit,
     )
 
     for clip in tqdm(cfg.clips, desc="Evaluating clips", unit="clip"):
-        evaluate_triplets(clip, cfg)
+        evaluate_triplets(clip, cfg, model=model, processor=processor)
         evaluate_temporal(clip, cfg, model=model, processor=processor)
         evaluate_spatial(
             clip=clip,

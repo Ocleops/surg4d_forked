@@ -3,6 +3,9 @@ from omegaconf import DictConfig
 from pathlib import Path
 import json
 import numpy as np
+from typing import Dict, List
+from benchmark.cholect50_utils import CholecT50Loader
+from benchmark.benchmark_config import normalize_for_matching
 
 def compute_spatial_metrics(cfg: DictConfig):
     if cfg.compute_metrics.spatial is None:
@@ -208,8 +211,21 @@ def compute_temporal_metrics(cfg: DictConfig):
     aggregated_file = Path(cm_cfg.aggregated_output_filename)
     aggregated_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # Metric params from eval config
-    tcfg = cfg.eval.temporal.metrics
+    # Metric params: prefer compute_metrics config, fallback to eval config if present
+    tcfg = None
+    try:
+        if hasattr(cm_cfg, 'metrics') and cm_cfg.metrics is not None:
+            tcfg = cm_cfg.metrics
+    except Exception:
+        tcfg = None
+    if tcfg is None:
+        try:
+            if hasattr(cfg, 'eval') and cfg.eval is not None and hasattr(cfg.eval, 'temporal') and cfg.eval.temporal is not None and hasattr(cfg.eval.temporal, 'metrics'):
+                tcfg = cfg.eval.temporal.metrics
+        except Exception:
+            tcfg = None
+    if tcfg is None:
+        tcfg = {}
 
     # Dataset accumulators per ablation and query type
     dataset: dict[str, dict[str, list[dict]]] = {}
@@ -234,9 +250,9 @@ def compute_temporal_metrics(cfg: DictConfig):
     def _eval_iou(predicted: dict | None, gt: dict, thr: float) -> dict:
         if predicted is None or 'ranges' not in predicted:
             return {
-                'iou': 0.0,
-                'precision': 0.0,
-                'recall': 0.0,
+                'iou': round(0.0, 2),
+                'precision': round(0.0, 2),
+                'recall': round(0.0, 2),
                 'success': False,
                 'threshold': thr,
             }
@@ -253,9 +269,9 @@ def compute_temporal_metrics(cfg: DictConfig):
         prec = inter / len(pred_frames) if len(pred_frames) > 0 else 0.0
         rec = inter / len(gt_frames) if len(gt_frames) > 0 else 0.0
         return {
-            'iou': iou,
-            'precision': prec,
-            'recall': rec,
+            'iou': round(float(iou), 2),
+            'precision': round(float(prec), 2),
+            'recall': round(float(rec), 2),
             'success': iou >= thr,
             'threshold': thr,
         }
@@ -265,8 +281,8 @@ def compute_temporal_metrics(cfg: DictConfig):
             return {
                 'order_correct': False,
                 'per_event_iou': [],
-                'mean_iou': 0.0,
-                'composite_score': 0.0,
+                'mean_iou': round(0.0, 2),
+                'composite_score': round(0.0, 2),
                 'success': False,
             }
         pred_events = predicted['events']
@@ -290,9 +306,9 @@ def compute_temporal_metrics(cfg: DictConfig):
         composite = order_weight * (1.0 if order_correct else 0.0) + iou_weight * mean_iou
         return {
             'order_correct': order_correct,
-            'per_event_iou': per_event_iou,
-            'mean_iou': mean_iou,
-            'composite_score': composite,
+            'per_event_iou': [round(float(x), 2) for x in per_event_iou],
+            'mean_iou': round(float(mean_iou), 2),
+            'composite_score': round(float(composite), 2),
             'success': composite >= 0.5,
         }
 
@@ -302,8 +318,8 @@ def compute_temporal_metrics(cfg: DictConfig):
                 'count_correct': False,
                 'count_error': int(gt['count']),
                 'per_occurrence_iou': [],
-                'mean_iou': 0.0,
-                'composite_score': 0.0,
+                'mean_iou': round(0.0, 2),
+                'composite_score': round(0.0, 2),
                 'success': False,
             }
         pred_count = int(predicted['count'])
@@ -338,9 +354,9 @@ def compute_temporal_metrics(cfg: DictConfig):
             'count_error': count_error,
             'pred_count': pred_count,
             'gt_count': gt_count,
-            'per_occurrence_iou': per_iou,
-            'mean_iou': mean_iou,
-            'composite_score': composite,
+            'per_occurrence_iou': [round(float(x), 2) for x in per_iou],
+            'mean_iou': round(float(mean_iou), 2),
+            'composite_score': round(float(composite), 2),
             'success': composite >= 0.5,
         }
 
@@ -407,8 +423,8 @@ def compute_temporal_metrics(cfg: DictConfig):
                     errors = [m['metrics']['frame_error'] for m in qres if m['metrics'].get('frame_error') != float('inf')]
                     success_rate = sum(1 for m in qres if m['metrics'].get('success')) / len(qres)
                     aggregated[qtype] = {
-                        'mean_frame_error': float(np.mean(errors)) if errors else float('inf'),
-                        'success_rate': success_rate,
+                        'mean_frame_error': (round(float(np.mean(errors)), 2) if errors else float('inf')),
+                        'success_rate': round(float(success_rate), 2),
                         'count': len(qres),
                     }
             # action_duration
@@ -417,8 +433,8 @@ def compute_temporal_metrics(cfg: DictConfig):
                 ious = [m['metrics'].get('iou', 0.0) for m in qres]
                 success_rate = sum(1 for m in qres if m['metrics'].get('success')) / len(qres)
                 aggregated['action_duration'] = {
-                    'mean_iou': float(np.mean(ious)) if ious else 0.0,
-                    'success_rate': success_rate,
+                    'mean_iou': round(float(np.mean(ious)), 2) if ious else round(0.0, 2),
+                    'success_rate': round(float(success_rate), 2),
                     'count': len(qres),
                 }
             # multiple_event_ordering
@@ -428,9 +444,9 @@ def compute_temporal_metrics(cfg: DictConfig):
                 order_correct_rate = sum(1 for m in qres if m['metrics'].get('order_correct')) / len(qres)
                 mean_ious = [m['metrics'].get('mean_iou', 0.0) for m in qres]
                 aggregated['multiple_event_ordering'] = {
-                    'mean_composite_score': float(np.mean(scores)) if scores else 0.0,
-                    'order_correct_rate': order_correct_rate,
-                    'mean_iou': float(np.mean(mean_ious)) if mean_ious else 0.0,
+                    'mean_composite_score': round(float(np.mean(scores)), 2) if scores else round(0.0, 2),
+                    'order_correct_rate': round(float(order_correct_rate), 2),
+                    'mean_iou': round(float(np.mean(mean_ious)), 2) if mean_ious else round(0.0, 2),
                     'count': len(qres),
                 }
             # count_frequency
@@ -440,9 +456,9 @@ def compute_temporal_metrics(cfg: DictConfig):
                 count_correct_rate = sum(1 for m in qres if m['metrics'].get('count_correct')) / len(qres)
                 mean_ious = [m['metrics'].get('mean_iou', 0.0) for m in qres]
                 aggregated['count_frequency'] = {
-                    'mean_composite_score': float(np.mean(scores)) if scores else 0.0,
-                    'count_correct_rate': count_correct_rate,
-                    'mean_iou': float(np.mean(mean_ious)) if mean_ious else 0.0,
+                    'mean_composite_score': round(float(np.mean(scores)), 2) if scores else round(0.0, 2),
+                    'count_correct_rate': round(float(count_correct_rate), 2),
+                    'mean_iou': round(float(np.mean(mean_ious)), 2) if mean_ious else round(0.0, 2),
                     'count': len(qres),
                 }
 
@@ -472,8 +488,8 @@ def compute_temporal_metrics(cfg: DictConfig):
                 errors = [m['metrics']['frame_error'] for m in qres if m['metrics'].get('frame_error') != float('inf')]
                 success_rate = sum(1 for m in qres if m['metrics'].get('success')) / len(qres)
                 agg[qtype] = {
-                    'mean_frame_error': float(np.mean(errors)) if errors else float('inf'),
-                    'success_rate': success_rate,
+                    'mean_frame_error': (round(float(np.mean(errors)), 2) if errors else float('inf')),
+                    'success_rate': round(float(success_rate), 2),
                     'count': len(qres),
                 }
         qres = by_type.get('action_duration', [])
@@ -481,8 +497,8 @@ def compute_temporal_metrics(cfg: DictConfig):
             ious = [m['metrics'].get('iou', 0.0) for m in qres]
             success_rate = sum(1 for m in qres if m['metrics'].get('success')) / len(qres)
             agg['action_duration'] = {
-                'mean_iou': float(np.mean(ious)) if ious else 0.0,
-                'success_rate': success_rate,
+                'mean_iou': round(float(np.mean(ious)), 2) if ious else round(0.0, 2),
+                'success_rate': round(float(success_rate), 2),
                 'count': len(qres),
             }
         qres = by_type.get('multiple_event_ordering', [])
@@ -491,9 +507,9 @@ def compute_temporal_metrics(cfg: DictConfig):
             order_correct_rate = sum(1 for m in qres if m['metrics'].get('order_correct')) / len(qres)
             mean_ious = [m['metrics'].get('mean_iou', 0.0) for m in qres]
             agg['multiple_event_ordering'] = {
-                'mean_composite_score': float(np.mean(scores)) if scores else 0.0,
-                'order_correct_rate': order_correct_rate,
-                'mean_iou': float(np.mean(mean_ious)) if mean_ious else 0.0,
+                'mean_composite_score': round(float(np.mean(scores)), 2) if scores else round(0.0, 2),
+                'order_correct_rate': round(float(order_correct_rate), 2),
+                'mean_iou': round(float(np.mean(mean_ious)), 2) if mean_ious else round(0.0, 2),
                 'count': len(qres),
             }
         qres = by_type.get('count_frequency', [])
@@ -502,9 +518,9 @@ def compute_temporal_metrics(cfg: DictConfig):
             count_correct_rate = sum(1 for m in qres if m['metrics'].get('count_correct')) / len(qres)
             mean_ious = [m['metrics'].get('mean_iou', 0.0) for m in qres]
             agg['count_frequency'] = {
-                'mean_composite_score': float(np.mean(scores)) if scores else 0.0,
-                'count_correct_rate': count_correct_rate,
-                'mean_iou': float(np.mean(mean_ious)) if mean_ious else 0.0,
+                'mean_composite_score': round(float(np.mean(scores)), 2) if scores else round(0.0, 2),
+                'count_correct_rate': round(float(count_correct_rate), 2),
+                'mean_iou': round(float(np.mean(mean_ious)), 2) if mean_ious else round(0.0, 2),
                 'count': len(qres),
             }
         summary[ablation] = {'metrics': agg}
@@ -515,6 +531,135 @@ def compute_temporal_metrics(cfg: DictConfig):
 def compute_triplets_metrics(cfg: DictConfig):
     if cfg.compute_metrics.triplets is None:
         return
+
+    cm_cfg = cfg.compute_metrics.triplets
+
+    pred_root = Path(cm_cfg.pred_root)
+    out_dir = Path(cm_cfg.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    aggregated_file = Path(cm_cfg.aggregated_output_filename)
+    aggregated_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Loader for ground-truth labels (CholecT50)
+    loader = CholecT50Loader(str(cfg.cholect50_root))
+    video_cache: Dict[int, Dict] = {}
+
+    # Dataset accumulators per ablation
+    dataset: Dict[str, List[Dict]] = {}
+
+    def _eval_triplets(pred: List[Dict], gt: List[Dict]) -> Dict:
+        best = {'instrument': False, 'verb': False, 'target': False, 'triplet': False}
+        for g in gt:
+            for p in pred:
+                inst = False
+                verb = False
+                targ = False
+                if p.get('instrument') is not None:
+                    inst = normalize_for_matching(p['instrument']) == normalize_for_matching(g.get('instrument', ''))
+                if p.get('verb') is not None:
+                    verb = normalize_for_matching(p['verb']) == normalize_for_matching(g.get('verb', ''))
+                if p.get('target') is not None:
+                    targ = normalize_for_matching(p['target']) == normalize_for_matching(g.get('target', ''))
+                if inst:
+                    best['instrument'] = True
+                if verb:
+                    best['verb'] = True
+                if targ:
+                    best['target'] = True
+                if inst and verb and targ:
+                    best['triplet'] = True
+        return best
+
+    # Per-clip processing
+    for clip in cfg.clips:
+        clip_name = str(clip.name)
+        pred_path = pred_root / f"{clip_name}.json"
+        if not pred_path.exists():
+            continue
+
+        with pred_path.open('r') as f:
+            preds = json.load(f)
+
+        per_clip_out: Dict[str, Dict] = {}
+
+        for ablation, items in preds.get('ablations', {}).items():
+            results = []
+            for item in items:
+                video_id = int(item.get('video_id')) if item.get('video_id') is not None else None
+                second_idx = int(item.get('second_idx')) if item.get('second_idx') is not None else None
+                predicted = item.get('predicted') or []
+
+                gt_trips: List[Dict] = []
+                if video_id is not None and second_idx is not None:
+                    if video_id not in video_cache:
+                        try:
+                            video_cache[video_id] = loader.load_video_annotations(video_id)
+                        except Exception:
+                            video_cache[video_id] = {}
+                    vdata = video_cache.get(video_id) or {}
+                    if vdata:
+                        try:
+                            gt_trips = loader.get_frame_triplets(vdata, second_idx)
+                        except Exception:
+                            gt_trips = []
+
+                metrics = _eval_triplets(predicted, gt_trips)
+
+                results.append({
+                    'sample_id': item.get('sample_id'),
+                    'video_id': video_id,
+                    'second_idx': second_idx,
+                    'predicted': predicted,
+                    'ground_truth': gt_trips,
+                    'metrics': metrics,
+                    'raw_response': item.get('raw_response'),
+                })
+
+            # Aggregate per ablation for this clip
+            n = max(1, len(results))
+            instrument_acc = sum(1 for r in results if r['metrics'].get('instrument')) / n
+            verb_acc = sum(1 for r in results if r['metrics'].get('verb')) / n
+            target_acc = sum(1 for r in results if r['metrics'].get('target')) / n
+            triplet_acc = sum(1 for r in results if r['metrics'].get('triplet')) / n
+
+            per_clip_out[ablation] = {
+                'metrics': {
+                    'instrument_acc': round(float(instrument_acc), 2),
+                    'verb_acc': round(float(verb_acc), 2),
+                    'target_acc': round(float(target_acc), 2),
+                    'triplet_acc': round(float(triplet_acc), 2),
+                    'count': len(results),
+                },
+                'results': results,
+            }
+
+            # Add to dataset accumulators
+            dataset.setdefault(ablation, []).extend(results)
+
+        # Save per-clip results file
+        with (out_dir / f"{clip_name}.json").open('w') as f:
+            json.dump({'clip': clip_name, 'ablations': per_clip_out}, f, indent=2)
+
+    # Aggregate dataset-wide per ablation
+    summary: Dict[str, Dict] = {}
+    for ablation, items in dataset.items():
+        n = max(1, len(items))
+        instrument_acc = sum(1 for r in items if r['metrics'].get('instrument')) / n
+        verb_acc = sum(1 for r in items if r['metrics'].get('verb')) / n
+        target_acc = sum(1 for r in items if r['metrics'].get('target')) / n
+        triplet_acc = sum(1 for r in items if r['metrics'].get('triplet')) / n
+        summary[ablation] = {
+            'metrics': {
+                'instrument_acc': round(float(instrument_acc), 2),
+                'verb_acc': round(float(verb_acc), 2),
+                'target_acc': round(float(target_acc), 2),
+                'triplet_acc': round(float(triplet_acc), 2),
+                'count': len(items),
+            }
+        }
+
+    with aggregated_file.open('w') as f:
+        json.dump({'ablations': summary}, f, indent=2)
 
 @hydra.main(config_path="conf", config_name="config.yaml", version_base="1.3")
 def main(cfg: DictConfig):

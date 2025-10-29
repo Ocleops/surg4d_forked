@@ -17,41 +17,6 @@ labels_filename_template: "{clip_name}_temporal.json"
 output_dir: ${eval.output_dir}/temporal
 
 # ============================================================================
-# EVALUATION METRICS - Category-specific metric configurations
-# ============================================================================
-metrics:
-  # Action Onset Detection: "When does X start happening?"
-  action_onset:
-    type: "frame_error"
-    tolerance: 3  # Accept prediction if within ±3 frames of ground truth
-    
-  # Action Offset Detection: "When does X stop happening?"
-  action_offset:
-    type: "frame_error"
-    tolerance: 3  # Accept prediction if within ±3 frames of ground truth
-    
-  # Action Duration/Range: "During which frames does X happen?"
-  action_duration:
-    type: "iou"
-    threshold: 0.5  # Minimum IoU to consider prediction correct
-    
-  # Multiple Event Ordering: "Which happens first, X or Y?"
-  multiple_event_ordering:
-    type: "composite"
-    # Evaluate both order correctness and temporal IoU per event
-    order_weight: 0.5  # Weight for correct ordering
-    iou_weight: 0.5    # Weight for frame range accuracy
-    iou_threshold: 0.5
-    
-  # Count/Frequency: "How many times does X happen?"
-  count_frequency:
-    type: "composite"
-    # Evaluate both count accuracy and temporal IoU per occurrence
-    count_weight: 0.5  # Weight for correct count
-    iou_weight: 0.5    # Weight for frame range accuracy per occurrence
-    iou_threshold: 0.5
-
-# ============================================================================
 # SYSTEM PROMPT - For graph-based temporal reasoning (multiframe_graph ablation)
 # ============================================================================
 system_prompt: |

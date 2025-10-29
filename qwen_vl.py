@@ -675,10 +675,11 @@ def prompt_with_dynamic_graph(
         for n in range(A.shape[0]):
             for m in range(A.shape[1]):
                 if A[n, m] > 0:
+                    centroid_dist = float(np.linalg.norm(node_centroids[t][n] - node_centroids[t][m]))
                     graph_content.append(
                         {
                             "type": "text",
-                            "text": f'<edge from="{n}" to="{m}" dist="{A[n, m]:.2f}"/>\n',
+                            "text": f'<edge from="{n}" to="{m}" overlap_score="{A[n, m]:.2f}" centroid_distance="{centroid_dist:.2f}"/>\n',
                         }
                     )
         graph_content.append(

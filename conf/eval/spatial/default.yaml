@@ -1,6 +1,4 @@
 colormap: "jet"
-use_bnb_4bit: false
-use_bnb_8bit: false
 gt_filename: ${preprocessing.spatial_labels_output_filename}
 output_dir: ${eval.output_dir}/spatial
 dump_visualizations: true
@@ -15,6 +13,7 @@ top_k_scores: 10 # for attn based methods wo/ refinement
 #   patch-level descriptors without any spatial or grid layout. Treat these descriptors as an
 #   unordered collection; do not rely on pixel positions, patch adjacency, or image structure.
 #   Focus only on semantic similarity between the query and the descriptors. No explanations are needed.
+splat_sort_by_patch: true
 splat_system_prompt: |
   You are an expert surgical assistant. Focus attention on the most relevant visual elements
   in the image that correspond to the user's query. No explanations are needed.
