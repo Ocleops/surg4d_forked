@@ -722,11 +722,20 @@ def splat_spatial_grounding_feats(
             - indices: numpy array of shape (n_splat_points) into the whole splat
     """
     patch_feats = [deform_at_timestep(gaussians, t)[1] for t in timesteps]
-    indices = np.random.choice(
-        gaussians.get_xyz.shape[0],
-        cfg.graph_extraction.spatial_grounding.n_splat_points,
-        replace=False,
-    )
+    # indices = np.random.choice(
+    #     gaussians.get_xyz.shape[0],
+    #     cfg.graph_extraction.spatial_grounding.n_splat_points,
+    #     replace=False,
+    # )
+    # Select top-k most opaque gaussians (deterministic) instead of random sampling
+    k = int(cfg.graph_extraction.spatial_grounding.n_splat_points)
+    total = int(gaussians.get_xyz.shape[0])
+    k = min(k, total)
+    # get_opacity is (N,1) or (N,), pick as 1D numpy array
+    opac = gaussians.get_opacity.squeeze().detach().cpu().numpy()
+    order = np.argsort(opac)  # ascending
+    indices = order[-k:][::-1]  # top-k descending
+
     patch_feats = [i[indices] for i in patch_feats]
     decoded_patch_feats = [
         decode_qwen(torch.tensor(i, device="cuda", dtype=torch.float32), cfg, clip)

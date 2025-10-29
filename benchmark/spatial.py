@@ -10,6 +10,7 @@ import re
 import qwen_vl
 from scene.dataset_readers import CameraInfo, readColmapSceneInfo
 from scene.cameras import Camera
+from PIL import Image
 
 
 def get_patched_qwen_for_spatial_grounding(
@@ -36,6 +37,7 @@ def extract_text_to_vision_attention(
     layers: List[int],
     prompt: str,
     substring: str,
+    system_prompt: str,
 ):
     """Extract attention scores from substring query tokens to vision tokens across layers.
 
@@ -58,13 +60,14 @@ def extract_text_to_vision_attention(
 
     # Build a message with an image placeholder and the full prompt
     messages = [
+        {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
         {
             "role": "user",
             "content": [
                 {"type": "image", "image": None},
                 {"type": "text", "text": prompt},
             ],
-        }
+        },
     ]
 
     # Prepare inputs using a mock image sized to match the number of patch features
@@ -125,6 +128,93 @@ def extract_text_to_vision_attention(
         attn_q_to_v = layer_attn[0, :, q_idx, :][:, :, v_idx].mean(
             dim=0
         )  # mean over heads
+        scores[out_pos] = attn_q_to_v.detach().to(torch.float32).cpu()
+
+    return {
+        "scores": scores,
+        "tokens": tokens,
+        "query_token_indices": query_token_indices,
+        "vision_token_indices": vision_token_indices,
+    }
+
+
+def extract_text_to_image_attention(
+    model: Qwen2_5_VLForConditionalGeneration,
+    processor: Qwen2_5_VLProcessor,
+    image: Image.Image,
+    layers: List[int],
+    prompt: str,
+    substring: str,
+    system_prompt: str,
+):
+    """Extract attention scores from substring query tokens to image vision tokens across layers.
+
+    Uses the actual image input, not custom patch features. Vision tokens are identified via
+    <|image_pad|> positions in the tokenized sequence.
+    """
+    assert substring in prompt
+
+    messages = [
+        {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": image},
+                {"type": "text", "text": prompt},
+            ],
+        },
+    ]
+
+    # Build text and inputs using real image
+    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = processor(text=[text], images=[[image]], padding=True, return_tensors="pt").to(model.device)
+
+    with torch.no_grad():
+        outputs = model(
+            **inputs,
+            output_attentions=True,
+            return_dict=True,
+        )
+
+    all_attn = list(outputs.attentions)
+
+    # Identify vision token positions via <|image_pad|>
+    input_ids = inputs.input_ids[0]
+    image_pad_token = processor.tokenizer.encode("<|image_pad|>", add_special_tokens=False)[0]
+    image_pad_positions = (input_ids == image_pad_token).nonzero(as_tuple=True)[0]
+    if image_pad_positions.numel() == 0:
+        raise ValueError("No <|image_pad|> tokens found in input sequence.")
+    vision_token_indices = image_pad_positions.tolist()
+
+    # Map substring to token indices
+    tokens = [processor.tokenizer.decode([tid]) for tid in input_ids.tolist()]
+    concatenated = "".join(tokens)
+    start_char = concatenated.lower().find(substring.lower())
+    end_char = start_char + len(substring)
+
+    query_token_indices = []
+    cursor = 0
+    for idx, tok in enumerate(tokens):
+        token_start = cursor
+        token_end = cursor + len(tok)
+        if token_start < end_char and token_end > start_char:
+            query_token_indices.append(idx)
+        cursor = token_end
+        if cursor > end_char and len(query_token_indices) > 0:
+            break
+
+    # Collect attention: [L, Q, V], averaged across heads
+    num_layers = len(layers)
+    num_queries = len(query_token_indices)
+    num_vision = len(vision_token_indices)
+    scores = torch.empty((num_layers, num_queries, num_vision), dtype=torch.float32)
+
+    q_idx = torch.tensor(query_token_indices, device=all_attn[0].device)
+    v_idx = torch.tensor(vision_token_indices, device=all_attn[0].device)
+
+    for out_pos, layer_idx in enumerate(layers):
+        layer_attn = all_attn[layer_idx]  # [1, heads, seq, seq]
+        attn_q_to_v = layer_attn[0, :, q_idx, :][:, :, v_idx].mean(dim=0)
         scores[out_pos] = attn_q_to_v.detach().to(torch.float32).cpu()
 
     return {
@@ -217,18 +307,28 @@ def splat_predict_query_list(
     clip_name: str,
     train_cameras,
     prompt_template: str,
+    system_prompt: str,
 ):
     outputs = []
+    # Reorder features by projected frame patch indices (no aggregation)
+    reordered_feats, new_to_orig = _reorder_feats_by_frame_patches(
+        ts_feats=ts_feats,
+        pos_t=pos_t,
+        train_cameras=train_cameras,
+        frame_number=frame_number,
+    )
+    feats_tensor = torch.tensor(reordered_feats, device=model.device)
     for query in queries_list:
         substring = query["query"]
         prompt = prompt_template.format(substring=substring)
         attn_out = extract_text_to_vision_attention(
             model=model,
             processor=processor,
-            vision_features=torch.tensor(ts_feats, device=model.device),
+            vision_features=feats_tensor,
             layers=layers,
             prompt=prompt,
             substring=substring,
+            system_prompt=system_prompt,
         )
         attn_scores = attn_out["scores"]
 
@@ -240,7 +340,9 @@ def splat_predict_query_list(
             top_scores = top_scores.detach().cpu().numpy()
             top_indices = top_indices.detach().cpu().numpy()
 
-            top_positions = pos_t[top_indices]
+            # Map back to original indices
+            orig_indices = new_to_orig[top_indices]
+            top_positions = pos_t[orig_indices]
 
             # Use frame_number directly from GT (assumed local zero-based index)
             local_idx = int(frame_number)
@@ -278,6 +380,8 @@ def splat_feat_queries(
     train_cameras = scene_info.train_cameras
 
     results = {}
+    splat_system_prompt = cfg.eval.spatial.splat_system_prompt
+
     for timestep, timestep_queries in clip_gt.items():
         t = int(timestep)
         ts_feats = splat_feats[t]
@@ -302,6 +406,7 @@ def splat_feat_queries(
             clip_name=clip.name,
             train_cameras=train_cameras,
             prompt_template=prompt_template,
+            system_prompt=splat_system_prompt,
         )
 
         results[timestep]["actions"] = splat_predict_query_list(
@@ -316,6 +421,7 @@ def splat_feat_queries(
             clip_name=clip.name,
             train_cameras=train_cameras,
             prompt_template=prompt_template,
+            system_prompt=splat_system_prompt,
         )
 
     return results
@@ -514,6 +620,167 @@ def static_graph_feat_queries(
             train_cameras=train_cameras,
             system_prompt=system_prompt,
             prompt_template=prompt_template,
+        )
+
+    return results
+
+
+def _qwen25_patch_grid(im_height: int, im_width: int) -> tuple[int, int]:
+    """Compute Qwen2.5-VL patch grid (H, W) for a given image size.
+
+    Mirrors qwen_vl.get_patch_segmasks grid math.
+    """
+    PATCH_SIZE = qwen_vl.PATCH_SIZE
+    EFFECTIVE_PATCH_SIZE = qwen_vl.EFFECTIVE_PATCH_SIZE
+    patches_height = im_height // EFFECTIVE_PATCH_SIZE + ((im_height // PATCH_SIZE) % 4 == 3)
+    patches_width = im_width // EFFECTIVE_PATCH_SIZE + ((im_width // PATCH_SIZE) % 4 == 3)
+    return int(patches_height), int(patches_width)
+
+
+def _patch_indices_to_pixel_centers(
+    patch_indices: np.ndarray, img_h: int, img_w: int
+) -> np.ndarray:
+    """Map flat patch indices (row-major) to pixel centers in the original image.
+
+    Returns array of shape (N, 2) with (x, y) in pixel coordinates.
+    """
+    EFFECTIVE_PATCH_SIZE = qwen_vl.EFFECTIVE_PATCH_SIZE
+    ph, pw = _qwen25_patch_grid(img_h, img_w)
+    cols = patch_indices % pw
+    rows = patch_indices // pw
+    xs = (cols + 0.5) * EFFECTIVE_PATCH_SIZE
+    ys = (rows + 0.5) * EFFECTIVE_PATCH_SIZE
+    xs = np.clip(xs, 0, img_w - 1)
+    ys = np.clip(ys, 0, img_h - 1)
+    return np.stack([xs, ys], axis=-1)
+
+
+def _reorder_feats_by_frame_patches(
+    ts_feats: np.ndarray,
+    pos_t: np.ndarray,
+    train_cameras,
+    frame_number: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Reorder features by projected frame patch index without aggregating.
+
+    Returns (reordered_feats, new_to_orig_idx), where new_to_orig_idx maps from
+    reordered token index back to the original ts_feats/pos_t index.
+    """
+    local_idx = int(frame_number)
+    frame_name = f"frame_{local_idx:06d}.jpg"
+    proj_matrix, img_width, img_height = get_proj_matrix_from_timestep(
+        local_idx, train_cameras, frame_name
+    )
+    pixels = project_3d_to_2d(pos_t, proj_matrix, img_width, img_height)  # (N,2)
+
+    EFFECTIVE_PATCH_SIZE = qwen_vl.EFFECTIVE_PATCH_SIZE
+    ph, pw = _qwen25_patch_grid(img_height, img_width)
+
+    cols = np.clip((pixels[:, 0] // EFFECTIVE_PATCH_SIZE).astype(np.int64), 0, pw - 1)
+    rows = np.clip((pixels[:, 1] // EFFECTIVE_PATCH_SIZE).astype(np.int64), 0, ph - 1)
+    # Stable order by (row, col) to mimic row-major patch scanning
+    order = np.lexsort((cols, rows))
+    reordered_feats = ts_feats[order]
+
+    # Map from new index -> original index
+    new_to_orig = order
+    return reordered_feats, new_to_orig
+
+def frame_attn_predict_query_list(
+    queries_list,
+    *,
+    model,
+    processor,
+    image: Image.Image,
+    layers: List[int],
+    top_k: int,
+    prompt_template: str,
+    system_prompt: str,
+):
+    outputs = []
+    for query in queries_list:
+        substring = query["query"]
+        prompt = prompt_template.format(substring=substring)
+        attn_out = extract_text_to_image_attention(
+            model=model,
+            processor=processor,
+            image=image,
+            layers=layers,
+            prompt=prompt,
+            substring=substring,
+            system_prompt=system_prompt,
+        )
+        attn_scores = attn_out["scores"]  # [L, Q, V]
+
+        out_item = {"query": substring, "predictions": {}}
+        for layer_idx, layer in enumerate(layers):
+            layer_scores = attn_scores[layer_idx]  # [Q, V]
+            layer_scores = layer_scores.mean(dim=0)  # [V]
+            top_scores, top_indices = layer_scores.topk(k=top_k, sorted=True)
+            top_scores = top_scores.detach().cpu().numpy()
+            top_indices = top_indices.detach().cpu().numpy()
+
+            # Map patch indices to pixel centers
+            pixels = _patch_indices_to_pixel_centers(top_indices, image.height, image.width)
+
+            out_item["predictions"][layer] = {
+                "scores": top_scores.tolist(),
+                "pixel_coords": pixels.tolist(),
+            }
+        outputs.append(out_item)
+    return outputs
+
+
+def frame_attn_feat_queries(
+    *,
+    model,
+    processor,
+    preprocessed_root: Path | str,
+    images_subdir: str,
+    clip_gt: Dict[str, Any],
+    clip: DictConfig,
+    cfg: DictConfig,
+):
+    """Run 2D frame attention baseline across all queries for a clip.
+
+    Uses text-to-vision attention on the original frame and maps top-k patches to pixel centers.
+    """
+    results: Dict[str, Any] = {}
+    images_dir = Path(preprocessed_root) / clip.name / images_subdir
+    layers = cfg.eval.spatial.layers
+    top_k = cfg.eval.spatial.top_k_scores
+    prompt_template = cfg.eval.spatial.frame_attn_prompt_template
+    system_prompt = cfg.eval.spatial.frame_attn_system_prompt
+
+    for timestep, timestep_queries in clip_gt.items():
+        frame_number = int(timestep_queries["frame_number"])  # local idx
+        frame_path = images_dir / f"frame_{frame_number:06d}.jpg"
+        if not frame_path.exists():
+            continue
+        image = Image.open(frame_path).convert("RGB")
+
+        results[timestep] = {"objects": [], "actions": []}
+
+        results[timestep]["objects"] = frame_attn_predict_query_list(
+            timestep_queries.get("objects", []),
+            model=model,
+            processor=processor,
+            image=image,
+            layers=layers,
+            top_k=top_k,
+            prompt_template=prompt_template,
+            system_prompt=system_prompt,
+        )
+
+        results[timestep]["actions"] = frame_attn_predict_query_list(
+            timestep_queries.get("actions", []),
+            model=model,
+            processor=processor,
+            image=image,
+            layers=layers,
+            top_k=top_k,
+            prompt_template=prompt_template,
+            system_prompt=system_prompt,
         )
 
     return results

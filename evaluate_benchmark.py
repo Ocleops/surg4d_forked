@@ -19,6 +19,7 @@ from benchmark.spatial import (
     splat_feat_queries,
     dump_spatial_prediction_visualizations,
     static_graph_feat_queries,
+    frame_attn_feat_queries,
 )
 from rerun_utils import (
     init_and_save_rerun,
@@ -259,11 +260,19 @@ def evaluate_spatial(
         clip=clip,
         cfg=cfg,
     )
-
     results_static_graph = static_graph_feat_queries(
         model=model,
         processor=processor,
         graph_dir=graph_dir,
+        clip_gt=gt_data,
+        clip=clip,
+        cfg=cfg,
+    )
+    results_frame_attn = frame_attn_feat_queries(
+        model=model_spatial,
+        processor=processor_spatial,
+        preprocessed_root=Path(cfg.preprocessed_root),
+        images_subdir=cfg.eval.paths.images_subdir,
         clip_gt=gt_data,
         clip=clip,
         cfg=cfg,
@@ -273,6 +282,7 @@ def evaluate_spatial(
     all_results = {
         "splat": results_splat,
         "static_graph": results_static_graph,
+        "frame_attn": results_frame_attn,
     }
     out_dir = Path(cfg.eval.spatial.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -300,6 +310,16 @@ def evaluate_spatial(
             gt_data=gt_data,
             viz_dir=Path(cfg.eval.spatial.visualizations_dir),
             method_name="static",
+        )
+        # And dump for frame-attention baseline
+        dump_spatial_prediction_visualizations(
+            results_splat=results_frame_attn,
+            clip_name=clip.name,
+            preprocessed_root=Path(cfg.preprocessed_root),
+            images_subdir=cfg.eval.paths.images_subdir,
+            gt_data=gt_data,
+            viz_dir=Path(cfg.eval.spatial.visualizations_dir),
+            method_name="frame_attn",
         )
 
     # Initialize rerun sink for spatial visualization
