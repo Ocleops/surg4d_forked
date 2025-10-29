@@ -14,6 +14,11 @@ from train_autoencoders import train_ae
 from train_splats import train_splat
 from extract_graphs import extract_graph
 from evaluate_benchmark import evaluate_triplets, evaluate_temporal, evaluate_spatial
+from compute_metrics import (
+    compute_spatial_metrics,
+    compute_temporal_metrics,
+    compute_triplets_metrics,
+)
 
 
 import sys
@@ -94,9 +99,11 @@ def main():
                 evaluate_triplets(clip, cfg)
                 evaluate_temporal(clip, cfg)
 
-                model_spatial, processor_spatial = get_patched_qwen_for_spatial_grounding(
-                    use_bnb_4bit=cfg.feature_extraction.bnb_4bit,
-                    use_bnb_8bit=cfg.feature_extraction.bnb_8bit,
+                model_spatial, processor_spatial = (
+                    get_patched_qwen_for_spatial_grounding(
+                        use_bnb_4bit=cfg.feature_extraction.bnb_4bit,
+                        use_bnb_8bit=cfg.feature_extraction.bnb_8bit,
+                    )
                 )
                 evaluate_spatial(clip, cfg, model_spatial, processor_spatial)
                 del model_spatial
@@ -106,10 +113,10 @@ def main():
     else:
         if not cfg.skip_preprocessing:
             for clip in cfg.clips:
-                    process_clip(clip, cfg)
+                process_clip(clip, cfg)
 
         if not cfg.skip_feature_extraction:
-            get_patched = _get_qwen_loader(cfg) 
+            get_patched = _get_qwen_loader(cfg)
             model, processor = get_patched()
             for clip in cfg.clips:
                 extract_qwen_features(clip, cfg, model, processor)
@@ -149,6 +156,12 @@ def main():
             del processor_spatial
             gc.collect()
             torch.cuda.empty_cache()
+
+        if not cfg.skip_compute_metrics:
+            compute_spatial_metrics(cfg)
+            compute_temporal_metrics(cfg)
+            compute_triplets_metrics(cfg)
+
 
 if __name__ == "__main__":
     main()
