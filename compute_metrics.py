@@ -103,6 +103,7 @@ def compute_spatial_metrics(cfg: DictConfig):
                                 continue
                             coords = np.array(layer_pred.get("pixel_coords", []), dtype=np.float64)
                             vals = _min_l2_at_k(coords, gt_xy)
+                            vals = np.round(vals, 2)
                             per_layer_out[lkey] = {f"min_l2@{k}": float(v) for k, v in zip(ks, vals.tolist())}
                             # accumulate per group/layer
                             if lkey not in sums[group]:
@@ -138,10 +139,11 @@ def compute_spatial_metrics(cfg: DictConfig):
                 for lkey, svec in sums[group].items():
                     c = counts[group].get(lkey, 0)
                     if c > 0:
-                        avg = (svec / c).tolist()
+                        avg_arr = svec / c
+                        avg_list = np.round(avg_arr, 2).tolist()
                     else:
-                        avg = [float("nan")] * len(ks)
-                    per_layer_avgs[lkey] = {f"min_l2@{k}": v for k, v in zip(ks, avg)}
+                        avg_list = [float("nan")] * len(ks)
+                    per_layer_avgs[lkey] = {f"min_l2@{k}": v for k, v in zip(ks, avg_list)}
                     per_layer_counts[lkey] = c
 
                     # Update dataset-wide accumulators
@@ -161,14 +163,13 @@ def compute_spatial_metrics(cfg: DictConfig):
         # Save per-clip file with query-wise metrics
         clip_out = {
             "clip": clip_name,
-            "config": {"l2_top_ks": ks, "layers": sorted(list(layers_filter), key=lambda x: int(x))},
             "methods": per_clip_results,
         }
         with (out_dir / f"{clip_name}.json").open("w") as f:
             json.dump(clip_out, f, indent=2)
 
     # Save dataset-wide summary
-    summary = {"config": {"l2_top_ks": ks, "layers": sorted(list(layers_filter), key=lambda x: int(x))}, "methods": {}}
+    summary = {"methods": {}}
     for method in methods:
         if method not in dataset_stats:
             continue
@@ -181,17 +182,18 @@ def compute_spatial_metrics(cfg: DictConfig):
                 total_count = int(stat["count"])  # type: ignore[index]
                 sums_arr = stat["sum"]  # type: ignore[index]
                 if total_count > 0:
-                    avg = (sums_arr / total_count).tolist()  # type: ignore[operator]
+                    avg_arr = sums_arr / total_count  # type: ignore[operator]
+                    avg_list = np.round(avg_arr, 2).tolist()
                 else:
-                    avg = [float("nan")] * len(ks)
-                per_layer[lkey] = {f"min_l2@{k}": v for k, v in zip(ks, avg)}
+                    avg_list = [float("nan")] * len(ks)
+                per_layer[lkey] = {f"min_l2@{k}": v for k, v in zip(ks, avg_list)}
                 per_layer_counts[lkey] = total_count
             out_m["per_class"][group] = per_layer
             out_m["counts"][group] = per_layer_counts
         summary["methods"][method] = out_m
 
     with aggregated_file.open("w") as f:
-        json.dump({"summary": summary, "config": {"l2_top_ks": ks, "layers": sorted(list(layers_filter), key=lambda x: int(x))}}, f, indent=2)
+        json.dump({"summary": summary}, f, indent=2)
 
 def compute_temporal_metrics(cfg: DictConfig):
     if cfg.compute_metrics.temporal is None:
