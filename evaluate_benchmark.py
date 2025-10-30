@@ -2,6 +2,8 @@ import gc
 import json
 from pathlib import Path
 from omegaconf import DictConfig, OmegaConf
+import os
+import random
 from tqdm import tqdm
 import hydra
 import numpy as np
@@ -454,6 +456,22 @@ def evaluate_spatial(
 
 @hydra.main(config_path="conf", config_name="config.yaml", version_base="1.3")
 def main(cfg: DictConfig):
+    # Deterministic Torch/CUDA setup
+    torch.manual_seed(42)
+    np.random.seed(42)
+    random.seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(42)
+    try:
+        torch.use_deterministic_algorithms(True)
+    except Exception:
+        pass
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
+        torch.backends.cuda.matmul.allow_tf32 = False
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":16:8")
+
     model, processor = get_patched_qwen(
         use_bnb_4bit=cfg.eval.use_bnb_4bit,
         use_bnb_8bit=cfg.eval.use_bnb_8bit,

@@ -85,6 +85,16 @@ def get_patched_qwen3(
             model.generation_config.return_legacy_cache = False
         except Exception:
             pass
+        # Enforce deterministic generation defaults centrally
+        try:
+            model.generation_config.do_sample = False
+            model.generation_config.temperature = 0.0
+            if hasattr(model.generation_config, "top_p"):
+                model.generation_config.top_p = 1.0
+            if hasattr(model.generation_config, "top_k"):
+                model.generation_config.top_k = 0
+        except Exception:
+            pass
 
     # 1) Patch prepare_inputs_for_generation to thread through `custom_patch_features`.
     orig_prepare = model.prepare_inputs_for_generation
