@@ -4,6 +4,7 @@ TEMP_CONTEXT_FR_MULTIPLIER: 1
 
 # Where to dump per-clip prediction files during eval
 output_dir: ${eval.output_dir}/triplets
+mask_overlay_viz_output_dir: ${eval.output_dir}/triplets_mask_overlays
 
 # Evaluate on frames aligned to graph timesteps (80 frames -> 20 steps)
 # Stride 4 means we evaluate at frames: 0,4,8,... within each clip
@@ -13,44 +14,78 @@ dump_viz: true
 viz_output_dir: ${eval.output_dir}/triplets_viz
 viz_max_samples: 100
 
-ablations: ["single_frame", "multiframe", "static_graph", "dynamic_graph"]
-multiframe_video_mode: false
+ablations: ["single_frame", "single_frame_mask_overlay", "multiframe", "multiframe_mask_overlay", "static_graph", "dynamic_graph", "static_descriptors", "dynamic_descriptors"]
+multiframe_video_mode: true
 
 system_prompts:
   single_frame: |
     You are an expert visceral surgeon analyzing a cholecystectomy image.
     Evaluate only the current image. Ensure instrument/verb/target combinations are coherent.
+  single_frame_mask_overlay: |
+    You are an expert visceral surgeon analyzing a cholecystectomy image.
+    Evaluate only the current image. Ensure instrument/verb/target combinations are coherent.
   multiframe: |
     You are an expert visceral surgeon analyzing a cholecystectomy video sequence.
     Always evaluate only the specified timestep t; other frames are context only. Ensure instrument/verb/target combinations are coherent at t.
+  static_descriptors: |
+    You are an expert visceral surgeon analyzing a surgical scene with descriptors.
+    Ensure instrument/verb/target combinations are coherent.
+
+    INPUT FORMAT:
+    - <descriptor>
+      - For each descriptor d:
+          <descriptor id="d">
+            [image descriptor]
+          </descriptor>
+    - </descriptor>
+
+    TASK: Determine which instrument-verb-target triplets are active using descriptors.
+    - Use object descriptors to identify instruments vs anatomy
+    - Output strictly the JSON specified in the user prompt; use STRING LABELS only
+    - You may briefly reason first. Then, on a new line at the end, output ONLY the final JSON object
   static_graph: |
     You are an expert visceral surgeon analyzing a surgical scene graph snapshot.
-    Evaluate only the specified timestep t; ensure instrument/verb/target combinations are coherent at t.
+    Ensure instrument/verb/target combinations are coherent.
 
     INPUT FORMAT:
     - <scene-graph>
-      - <objects>: A list of descriptors for each object id, each shown as an image block:
-        <object id="i"> [image descriptor] </object>
-      - <spatial-graphs>:
-        - <spatial-graph t="k"> for a single timestep k only
-          - For each node n:
-            <node object-id="n">
-              <centroid x="..." y="..." z="..."/>
-              <extent x="..." y="..." z="..."/>
-            </node>
+      - <spatial-graph>
+        - For each node n:
+          <node id="n">
+            <descriptor> [image descriptor] </descriptor>
+            <centroid x="..." y="..." z="..."/>
+            <extent x="..." y="..." z="..."/>
+          </node>
           - For each interacting pair (n,m):
             <edge from="n" to="m" overlap_score="..." centroid_distance="..."/>
-        - </spatial-graph>
-      - </spatial-graphs>
+      - </spatial-graph>
     - </scene-graph>
 
-    TASK: Determine which instrument-verb-target triplets are active at the provided timestep using ONLY that timestep's nodes/edges.
+    TASK: Determine which instrument-verb-target triplets are active using nodes/edges.
     - Use object descriptors to identify instruments vs anatomy
     - Use edges/overlap and centroid distances to infer interactions
     - Output strictly the JSON specified in the user prompt; use STRING LABELS only
     - You may briefly reason first. Then, on a new line at the end, output ONLY the final JSON object
+  dynamic_descriptors: |
+    You are an expert visceral surgeon analyzing surgical scene with descriptors over time.
+    Evaluate only the specified timestep t; ensure instrument/verb/target combinations are coherent at t.
+
+    INPUT FORMAT:
+    - <descriptors>
+      - For each descriptor d:
+        - <descriptor id="d">
+          [image descriptor]
+        </descriptor>
+      - </descriptor>
+    - </descriptors>
+
+    TASK: Determine which instrument-verb-target triplets are active using descriptors. Answer ONLY for the specified timestep t, other timesteps are context only.
+    - Identify instruments vs anatomy from descriptors
+    - Output strictly the JSON specified in the user prompt; use STRING LABELS only
+    - You may briefly reason first. Then, on a new line at the end, output ONLY the final JSON object
   dynamic_graph: |
     You are an expert visceral surgeon analyzing surgical scene graphs over time.
+    Evaluate only the specified timestep t; ensure instrument/verb/target combinations are coherent at t.
 
     INPUT FORMAT:
     - <scene-graph>
@@ -69,9 +104,9 @@ system_prompts:
       - </spatial-graphs>
     - </scene-graph>
 
-    TASK: Use the full temporal context to disambiguate actions but evaluate ONLY the timestep specified in the user prompt.
+    TASK: Determine which instrument-verb-target triplets are active using nodes/edges. Answer ONLY for the specified timestep t, other timesteps are context only.
     - Identify instruments vs anatomy from descriptors
-    - Use edges and spatial changes to infer interactions/actions
+    - Use nodes/edges/overlap and centroid distances to infer interactions/actions
     - Output strictly the JSON specified in the user prompt; use STRING LABELS only
     - You may briefly reason first. Then, on a new line at the end, output ONLY the final JSON object
 
@@ -82,6 +117,7 @@ prompts:
     - ONLY report triplets where both the instrument and the action are visible
     - Do NOT infer from procedure context; return {"triplets": []} if unsure
     - REASON ABOUT COMBINATIONS: Verify that each instrument/verb/target combination is surgically plausible and consistent with the visible evidence before including it.
+    - ONLY report triplets for which you have high confidence! Do not include triplets that you are unsure about.
     - IMPORTANT: Values for "instrument", "verb", and "target" MUST be STRING LABELS from VALID CATEGORIES below. Never output numeric IDs.
     VALID CATEGORIES:
     - instrument: ["grasper", "bipolar", "hook", "scissors", "clipper", "irrigator"]
@@ -104,7 +140,35 @@ prompts:
       ```
     EXAMPLES (invalid):
     - {"subject":"grasper","action":"grasp","object":"cystic_duct"}  # wrong keys
-    - {"triplets": {"instrument":"..."}}  # wrong type
+  single_frame_mask_overlay: |
+    YOUR TASK: Identify instrument-verb-target triplets that are CURRENTLY ACTIVE and CLEARLY VISIBLE in this image.
+    CRITICAL RULES:
+    - ONLY report triplets where both the instrument and the action are visible
+    - Do NOT infer from procedure context; return {"triplets": []} if unsure
+    - REASON ABOUT COMBINATIONS: Verify that each instrument/verb/target combination is surgically plausible and consistent with the visible evidence before including it.
+    - ONLY report triplets for which you have high confidence! Do not include triplets that you are unsure about.
+    - IMPORTANT: Values for "instrument", "verb", and "target" MUST be STRING LABELS from VALID CATEGORIES below. Never output numeric IDs.
+    VALID CATEGORIES:
+    - instrument: ["grasper", "bipolar", "hook", "scissors", "clipper", "irrigator"]
+    - verb: ["grasp", "retract", "dissect", "coagulate", "clip", "cut", "aspirate", "irrigate", "pack", "null_verb"]
+    - target: ["gallbladder", "cystic_plate", "cystic_duct", "cystic_artery", "cystic_pedicle", "blood_vessel", "fluid", "abdominal_wall_cavity", "liver", "adhesion", "omentum", "peritoneum", "gut", "specimen_bag", "null_target"]
+    ANSWER FORMAT: {"triplets": [{"instrument": "<string>", "verb": "<string>", "target": "<string>"}, ...]}
+
+    OUTPUT CONSTRAINTS:
+    You may briefly reason first. Then, on a new line at the end, output ONLY the final JSON object.
+    - JSON OBJECT ONLY with this schema: {"triplets": [{"instrument": "<string>", "verb": "<string>", "target": "<string>"}, ...]}
+    - Keys MUST be exactly: instrument, verb, target. Values MUST be lowercase strings from VALID CATEGORIES.
+    - No extra fields; no IDs; no nested objects; return {"triplets": []} if unsure.
+    - Wrap ONLY the JSON object in a single ```json fenced block, or return the bare JSON. No text outside the JSON.
+    EXAMPLES (valid):
+    - ```json
+      {"triplets": []}
+      ```
+    - ```json
+      {"triplets": [{"instrument":"grasper","verb":"grasp","target":"cystic_duct"}]}
+      ```
+    EXAMPLES (invalid):
+    - {"subject":"grasper","action":"grasp","object":"cystic_duct"}  # wrong keys
   multiframe: |
     YOUR TASK: Identify instrument-verb-target triplets that are ACTIVE at timestep t = {timestep}.
     Use the frames as temporal context strictly to improve confidence; the output must reflect only timestep t.
@@ -112,6 +176,7 @@ prompts:
     - Evaluate ONLY timestep t. Other frames are context only.
     - If an instrument/verb/target is not active at t, do not include it even if it appears before/after.
     - REASON ABOUT COMBINATIONS: Ensure instrument, verb, and target form a consistent action at t.
+    - ONLY report triplets for which you have high confidence! Do not include triplets that you are unsure about.
     - IMPORTANT: Values for "instrument", "verb", and "target" MUST be STRING LABELS from VALID CATEGORIES below. Never output numeric IDs.
     VALID CATEGORIES:
     - instrument: ["grasper", "bipolar", "hook", "scissors", "clipper", "irrigator"]
@@ -134,13 +199,41 @@ prompts:
       ```
     EXAMPLES (invalid):
     - {"subject":"grasper","action":"grasp","object":"cystic_duct"}  # wrong keys
-    - {"triplets": {"instrument":"..."}}  # wrong type
-  static_graph: |
-    You are given a static scene graph snapshot at timestep t = {timestep}.
-    YOUR TASK: Identify instrument-verb-target triplets that are CURRENTLY ACTIVE and CLEARLY VISIBLE in this graph.
-    TIMESTEPS:
-    - Evaluate ONLY the specified timestep t.
-    - REASON ABOUT COMBINATIONS: Ensure instrument, verb, and target form a consistent action at t per the graph evidence.
+  multiframe_mask_overlay: |
+    YOUR TASK: Identify instrument-verb-target triplets that are ACTIVE at timestep t = {timestep}.
+    Use the frames as temporal context strictly to improve confidence; the output must reflect only timestep t.
+    CRITICAL TEMPORAL FOCUS:
+    - Evaluate ONLY timestep t. Other frames are context only.
+    - If an instrument/verb/target is not active at t, do not include it even if it appears before/after.
+    - REASON ABOUT COMBINATIONS: Ensure instrument, verb, and target form a consistent action at t.
+    - ONLY report triplets for which you have high confidence! Do not include triplets that you are unsure about.
+    - IMPORTANT: Values for "instrument", "verb", and "target" MUST be STRING LABELS from VALID CATEGORIES below. Never output numeric IDs.
+    VALID CATEGORIES:
+    - instrument: ["grasper", "bipolar", "hook", "scissors", "clipper", "irrigator"]
+    - verb: ["grasp", "retract", "dissect", "coagulate", "clip", "cut", "aspirate", "irrigate", "pack", "null_verb"]
+    - target: ["gallbladder", "cystic_plate", "cystic_duct", "cystic_artery", "cystic_pedicle", "blood_vessel", "fluid", "abdominal_wall_cavity", "liver", "adhesion", "omentum", "peritoneum", "gut", "specimen_bag", "null_target"]
+    ANSWER FORMAT: {"triplets": [{"instrument": "<string>", "verb": "<string>", "target": "<string>"}, ...]}
+
+    OUTPUT CONSTRAINTS:
+    You may briefly reason first. Then, on a new line at the end, output ONLY the final JSON object.
+    - JSON OBJECT ONLY with this schema: {"triplets": [{"instrument": "<string>", "verb": "<string>", "target": "<string>"}, ...]}
+    - Keys MUST be exactly: instrument, verb, target. Values MUST be lowercase strings from VALID CATEGORIES.
+    - No extra fields; no IDs; no nested objects; return {"triplets": []} if unsure.
+    - Wrap ONLY the JSON object in a single ```json fenced block, or return the bare JSON. No text outside the JSON.
+    EXAMPLES (valid):
+    - ```json
+      {"triplets": []}
+      ```
+    - ```json
+      {"triplets": [{"instrument":"grasper","verb":"grasp","target":"cystic_duct"}]}
+      ```
+    EXAMPLES (invalid):
+    - {"subject":"grasper","action":"grasp","object":"cystic_duct"}  # wrong keys
+  static_descriptors: |
+    You are given a static scene with descriptors.
+    YOUR TASK: Identify instrument-verb-target triplets that are CURRENTLY ACTIVE and CLEARLY VISIBLE in this scene.
+    - REASON ABOUT COMBINATIONS: Ensure instrument, verb, and target form a consistent action per the scene evidence.
+    - ONLY report triplets for which you have high confidence! Do not include triplets that you are unsure about.
     - IMPORTANT: Values for "instrument", "verb", and "target" MUST be STRING LABELS from VALID CATEGORIES below. Never output numeric IDs.
     VALID CATEGORIES:
     - instrument: ["grasper", "bipolar", "hook", "scissors", "clipper", "irrigator"]
@@ -160,13 +253,62 @@ prompts:
       ```
     EXAMPLES (invalid):
     - {"subject":"grasper","action":"grasp","object":"cystic_duct"}  # wrong keys
-    - {"triplets": {"instrument":"..."}}  # wrong type
+  static_graph: |
+    You are given a static scene graph.
+    YOUR TASK: Identify instrument-verb-target triplets that are CURRENTLY ACTIVE and CLEARLY VISIBLE in this graph.
+    - REASON ABOUT COMBINATIONS: Ensure instrument, verb, and target form a consistent action per the graph evidence.
+    - ONLY report triplets for which you have high confidence! Do not include triplets that you are unsure about.
+    - IMPORTANT: Values for "instrument", "verb", and "target" MUST be STRING LABELS from VALID CATEGORIES below. Never output numeric IDs.
+    VALID CATEGORIES:
+    - instrument: ["grasper", "bipolar", "hook", "scissors", "clipper", "irrigator"]
+    - verb: ["grasp", "retract", "dissect", "coagulate", "clip", "cut", "aspirate", "irrigate", "pack", "null_verb"]
+    - target: ["gallbladder", "cystic_plate", "cystic_duct", "cystic_artery", "cystic_pedicle", "blood_vessel", "fluid", "abdominal_wall_cavity", "liver", "adhesion", "omentum", "peritoneum", "gut", "specimen_bag", "null_target"]
+    ANSWER FORMAT: {"triplets": [{"instrument": "<string>", "verb": "<string>", "target": "<string>"}, ...]}
+
+    OUTPUT CONSTRAINTS:
+    You may briefly reason first. Then, on a new line at the end, output ONLY the final JSON object.
+    - JSON OBJECT ONLY with this schema: {"triplets": [{"instrument": "<string>", "verb": "<string>", "target": "<string>"}, ...]}
+    - Keys MUST be exactly: instrument, verb, target. Values MUST be lowercase strings from VALID CATEGORIES.
+    - No extra fields; no IDs; no nested objects; if unsure, select the most plausible triplet(s) supported by the graph evidence; avoid empty unless no instrument-action-target is present.
+    - Wrap ONLY the JSON object in a single ```json fenced block, or return the bare JSON. No text outside the JSON.
+    EXAMPLES (valid):
+    - ```json
+      {"triplets": [{"instrument":"grasper","verb":"grasp","target":"cystic_duct"}]}
+      ```
+    EXAMPLES (invalid):
+    - {"subject":"grasper","action":"grasp","object":"cystic_duct"}  # wrong keys
+  dynamic_descriptors: |
+    You are given a dynamic scene with descriptors over time.
+    YOUR TASK: Determine which instrument-verb-target triplets are active using descriptors. Answer ONLY for the specified timestep t, other timesteps are context only.
+    TIMESTEPS:
+    - Evaluate ONLY the specified timestep t.
+    - REASON ABOUT COMBINATIONS: Ensure instrument, verb, and target form a consistent action at t per the temporal scene evidence.
+    - ONLY report triplets for which you have high confidence! Do not include triplets that you are unsure about.
+    VALID CATEGORIES:
+    - instrument: ["grasper", "bipolar", "hook", "scissors", "clipper", "irrigator"]
+    - verb: ["grasp", "retract", "dissect", "coagulate", "clip", "cut", "aspirate", "irrigate", "pack", "null_verb"]
+    - target: ["gallbladder", "cystic_plate", "cystic_duct", "cystic_artery", "cystic_pedicle", "blood_vessel", "fluid", "abdominal_wall_cavity", "liver", "adhesion", "omentum", "peritoneum", "gut", "specimen_bag", "null_target"]
+    ANSWER FORMAT: {"triplets": [{"instrument": "<string>", "verb": "<string>", "target": "<string>"}, ...]}
+
+    OUTPUT CONSTRAINTS:
+    You may briefly reason first. Then, on a new line at the end, output ONLY the final JSON object.
+    - JSON OBJECT ONLY with this schema: {"triplets": [{"instrument": "<string>", "verb": "<string>", "target": "<string>"}, ...]}
+    - Keys MUST be exactly: instrument, verb, target. Values MUST be lowercase strings from VALID CATEGORIES.
+    - No extra fields; no IDs; no nested objects; if unsure, select the most plausible triplet(s) supported by temporal scene evidence; avoid empty unless no instrument-action-target is present.
+    - Wrap ONLY the JSON object in a single ```json fenced block, or return the bare JSON. No text outside the JSON.
+    EXAMPLES (valid):
+    - ```json
+      {"triplets": [{"instrument":"grasper","verb":"grasp","target":"cystic_duct"}]}
+      ```
+    EXAMPLES (invalid):
+    - {"subject":"grasper","action":"grasp","object":"cystic_duct"}  # wrong keys
   dynamic_graph: |
     You are given a dynamic scene graph over time.
     YOUR TASK: Evaluate ONLY timestep t = {timestep}. Use the temporal evolution to disambiguate, but output triplets active at t.
     TIMESTEPS:
     - Evaluate ONLY the specified timestep t.
     - REASON ABOUT COMBINATIONS: Ensure instrument, verb, and target form a consistent action at t per the temporal graph evidence.
+    - ONLY report triplets for which you have high confidence! Do not include triplets that you are unsure about.
     VALID CATEGORIES:
     - instrument: ["grasper", "bipolar", "hook", "scissors", "clipper", "irrigator"]
     - verb: ["grasp", "retract", "dissect", "coagulate", "clip", "cut", "aspirate", "irrigate", "pack", "null_verb"]
@@ -185,6 +327,5 @@ prompts:
       ```
     EXAMPLES (invalid):
     - {"subject":"grasper","action":"grasp","object":"cystic_duct"}  # wrong keys
-    - {"triplets": {"instrument":"..."}}  # wrong type
 
 

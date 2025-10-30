@@ -8,10 +8,10 @@ aggregated_output_filename: ${compute_metrics.temporal.output_dir}/aggregated.js
 metrics:
   action_onset:
     type: "frame_error"
-    tolerance: 3
+    tolerance: 1
   action_offset:
     type: "frame_error"
-    tolerance: 3
+    tolerance: 1
   action_duration:
     type: "iou"
     threshold: 0.5

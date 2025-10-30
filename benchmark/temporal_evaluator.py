@@ -19,7 +19,7 @@ from typing import List, Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from benchmark.benchmark_config import BenchmarkConfig
-from qwen_vl import prompt_with_dynamic_graph
+from qwen_vl import prompt_with_dynamic_graph, prompt_with_dynamic_descriptors
 from qwen_vl_utils import process_vision_info
 
 #TODO: change "field of view" query focus for video01_16345 (does not make sense for graph)
@@ -227,6 +227,16 @@ class TemporalFrameEvaluator:
             # Prefer task-specific template from Hydra
             template = self.temporal_cfg['base_prompts'][getattr(self, 'current_query_type', '')]
             selected_frames = self.video_frames
+            systems_cfg = self.temporal_cfg.get('system_prompts', {})
+            system_prompt = None
+            try:
+                mf_cfg = systems_cfg.get('multiframe')
+                if isinstance(mf_cfg, dict):
+                    system_prompt = mf_cfg.get(getattr(self, 'current_query_type', ''), None)
+                else:
+                    system_prompt = systems_cfg.get('multiframe', None)
+            except Exception:
+                system_prompt = None
             try:
                 graph_data = self._load_graph_data(self.graph_path)
                 if graph_data is not None:
@@ -244,12 +254,23 @@ class TemporalFrameEvaluator:
                 num_frames_override=len(selected_frames),
                 last_frame_override=len(selected_frames) - 1,
             )
-            response = self._query_multiframe(selected_frames, prompt)
+            response = self._query_multiframe(selected_frames, prompt, system_prompt=system_prompt)
         
         elif ablation == "multiframe_graph":
             # Video + Graph: Use graph prompt and system prompt; prefer task-specific
             template = self.temporal_cfg['graph_prompts'][getattr(self, 'current_query_type', '')]
-            system_prompt = self.temporal_cfg.get('system_prompt', None)
+            systems_cfg = self.temporal_cfg.get('system_prompts', {})
+            # Prefer per-task prompt; fall back to legacy single system_prompt
+            try:
+                mg_cfg = systems_cfg.get('multiframe_graph')
+                if isinstance(mg_cfg, dict):
+                    system_prompt = mg_cfg.get(getattr(self, 'current_query_type', ''), None)
+                else:
+                    system_prompt = systems_cfg.get('multiframe_graph', None)
+            except Exception:
+                system_prompt = None
+            if system_prompt is None:
+                system_prompt = self.temporal_cfg.get('system_prompt', None)
             # Determine graph timesteps for accurate prompt variables
             graph_data = self._load_graph_data(self.graph_path)
             if graph_data is not None:
@@ -268,6 +289,40 @@ class TemporalFrameEvaluator:
                 graph_path=self.graph_path,
                 prompt=prompt,
                 system_prompt=system_prompt
+            )
+        
+        elif ablation == "multiframe_descriptors":
+            # Descriptors-only (no graph structure): Use descriptors prompt and system prompt; prefer task-specific
+            template = self.temporal_cfg['descriptors_prompts'][getattr(self, 'current_query_type', '')]
+            systems_cfg = self.temporal_cfg.get('system_prompts', {})
+            try:
+                md_cfg = systems_cfg.get('multiframe_descriptors')
+                if isinstance(md_cfg, dict):
+                    system_prompt = md_cfg.get(getattr(self, 'current_query_type', ''), None)
+                else:
+                    system_prompt = systems_cfg.get('multiframe_descriptors', None)
+            except Exception:
+                system_prompt = None
+            if system_prompt is None:
+                system_prompt = self.temporal_cfg.get('system_prompt', None)
+            # Determine descriptor timesteps via graph data (node_feats timeline)
+            graph_data = self._load_graph_data(self.graph_path)
+            if graph_data is not None:
+                num_ts = int(graph_data['adjacency_matrices'].shape[0])
+            else:
+                num_ts = self.num_frames
+            prompt = self._build_prompt(
+                template=template,
+                question=question,
+                answer_format=answer_format,
+                num_frames_override=num_ts,
+                last_frame_override=num_ts - 1,
+            )
+            response = self._query_with_descriptors(
+                image_paths=self.video_frames,
+                graph_path=self.graph_path,
+                prompt=prompt,
+                system_prompt=system_prompt,
             )
         
         else:
@@ -297,14 +352,16 @@ class TemporalFrameEvaluator:
             answer_format=answer_format,
         )
     
-    def _query_multiframe(self, image_paths: List[Path], prompt: str) -> str:
+    def _query_multiframe(self, image_paths: List[Path], prompt: str, system_prompt: str | None = None) -> str:
         """Query model with multiple frames (video)"""
         
         content = []
         content.append({"type": "video", "video": [str(p) for p in image_paths]})
         content.append({"type": "text", "text": prompt})
-        
-        messages = [{"role": "user", "content": content}]
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": [{"type": "text", "text": system_prompt}]})
+        messages.append({"role": "user", "content": content})
         
         text = self.processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
@@ -363,6 +420,34 @@ class TemporalFrameEvaluator:
             system_prompt=system_prompt if system_prompt is not None else self.temporal_cfg.get('system_prompt', None),
         )
         
+        return response
+
+    def _query_with_descriptors(
+        self,
+        image_paths: List[Path],
+        graph_path: Path,
+        prompt: str,
+        system_prompt: str | None = None,
+    ) -> str:
+        """Query model with multiple frames AND descriptor features only (no graph)."""
+        # Load graph data to access descriptor npz timeline
+        graph_data = self._load_graph_data(graph_path)
+        if graph_data is None:
+            print("Warning: Could not load descriptor features, falling back to video-only")
+            return self._query_multiframe(image_paths, prompt, system_prompt=system_prompt)
+
+        response = prompt_with_dynamic_descriptors(
+            question=prompt,
+            node_feats=graph_data['node_feats'],
+            adjacency_matrices=graph_data['adjacency_matrices'],
+            node_centers=graph_data['node_centers'],
+            node_centroids=graph_data['node_centroids'],
+            node_extents=graph_data['node_extents'],
+            model=self.model,
+            processor=self.processor,
+            system_prompt=system_prompt if system_prompt is not None else self.temporal_cfg.get('system_prompt', None),
+        )
+
         return response
     
     def _load_graph_data(self, graph_path: Path) -> Optional[Dict]:

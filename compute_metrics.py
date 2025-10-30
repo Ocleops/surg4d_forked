@@ -251,12 +251,13 @@ def compute_temporal_metrics(cfg: DictConfig):
             'success': err <= tol,
         }
 
-    def _eval_iou(predicted: dict | None, gt: dict, thr: float) -> dict:
+    def _eval_iou(predicted: dict | None, gt: dict, thr: float, total_frames: int | None = None) -> dict:
         if predicted is None or 'ranges' not in predicted:
             return {
                 'iou': round(0.0, 2),
                 'precision': round(0.0, 2),
                 'recall': round(0.0, 2),
+                'accuracy': round(0.0, 2),
                 'success': False,
                 'threshold': thr,
             }
@@ -272,10 +273,20 @@ def compute_temporal_metrics(cfg: DictConfig):
         iou = inter / union if union > 0 else 0.0
         prec = inter / len(pred_frames) if len(pred_frames) > 0 else 0.0
         rec = inter / len(gt_frames) if len(gt_frames) > 0 else 0.0
+        # accuracy over timesteps = (TP + TN) / total_frames
+        # determine total_frames if not provided: fallback to max frame index observed + 1
+        if total_frames is None:
+            max_end_gt = max((int(b) for (_, b) in gt.get('ranges', []) if isinstance(b, (int, float))), default=-1)
+            max_end_pr = max((int(b) for (_, b) in predicted.get('ranges', []) if isinstance(b, (int, float))), default=-1)
+            total_frames = max(max_end_gt, max_end_pr) + 1 if max(max_end_gt, max_end_pr) >= 0 else 0
+        tp = len(gt_frames & pred_frames)
+        tn = max(0, (total_frames or 0) - len(gt_frames | pred_frames))
+        acc = ((tp + tn) / total_frames) if (total_frames and total_frames > 0) else 0.0
         return {
             'iou': round(float(iou), 2),
             'precision': round(float(prec), 2),
             'recall': round(float(rec), 2),
+            'accuracy': round(float(acc), 2),
             'success': iou >= thr,
             'threshold': thr,
         }
@@ -377,6 +388,7 @@ def compute_temporal_metrics(cfg: DictConfig):
         with gt_path.open('r') as f:
             gt_full = json.load(f)
         gt_by_id = {a['query_id']: a for a in gt_full.get('annotations', [])}
+        clip_num_frames = int(gt_full.get('clip_info', {}).get('num_frames', 0))
 
         per_clip_out: dict[str, dict] = {}
 
@@ -395,7 +407,7 @@ def compute_temporal_metrics(cfg: DictConfig):
                         metrics = _eval_frame_error(pred, gt, tol)
                     elif qtype == 'action_duration':
                         thr = float(tcfg[qtype]['threshold'])
-                        metrics = _eval_iou(pred, gt, thr)
+                        metrics = _eval_iou(pred, gt, thr, total_frames=clip_num_frames)
                     elif qtype == 'multiple_event_ordering':
                         ow = float(tcfg[qtype]['order_weight'])
                         iw = float(tcfg[qtype]['iou_weight'])
@@ -435,9 +447,11 @@ def compute_temporal_metrics(cfg: DictConfig):
             qres = by_type.get('action_duration', [])
             if qres:
                 ious = [m['metrics'].get('iou', 0.0) for m in qres]
+                accs = [m['metrics'].get('accuracy', 0.0) for m in qres]
                 success_rate = sum(1 for m in qres if m['metrics'].get('success')) / len(qres)
                 aggregated['action_duration'] = {
                     'mean_iou': round(float(np.mean(ious)), 2) if ious else round(0.0, 2),
+                    'mean_accuracy': round(float(np.mean(accs)), 2) if accs else round(0.0, 2),
                     'success_rate': round(float(success_rate), 2),
                     'count': len(qres),
                 }
@@ -499,9 +513,11 @@ def compute_temporal_metrics(cfg: DictConfig):
         qres = by_type.get('action_duration', [])
         if qres:
             ious = [m['metrics'].get('iou', 0.0) for m in qres]
+            accs = [m['metrics'].get('accuracy', 0.0) for m in qres]
             success_rate = sum(1 for m in qres if m['metrics'].get('success')) / len(qres)
             agg['action_duration'] = {
                 'mean_iou': round(float(np.mean(ious)), 2) if ious else round(0.0, 2),
+                'mean_accuracy': round(float(np.mean(accs)), 2) if accs else round(0.0, 2),
                 'success_rate': round(float(success_rate), 2),
                 'count': len(qres),
             }
