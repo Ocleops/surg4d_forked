@@ -503,6 +503,128 @@ def generate_with_vision_features(
     response = output_text[0]
     return response
 
+def prompt_with_graph_at_timestep(
+    question: str,
+    node_feats: np.lib.npyio.NpzFile,
+    timestep_idx: int,
+    adjacency_matrices: np.ndarray,
+    node_centers: np.ndarray,
+    node_centroids: np.ndarray,
+    node_extents: np.ndarray,
+    model: Qwen2_5_VLForConditionalGeneration,
+    processor: Qwen2_5_VLProcessor,
+    system_prompt: str = None,
+):
+    """
+    node_feats: np.lib.npyio.NpzFile - npz file containing node features for each timestep
+    timestep_idx: int - index of the timestep to use for the node features
+    adjacency_matrices: np.ndarray - adjacency matrices through time - weights are bhattacharyya coefficients (timesteps, n_clusters, n_clusters)
+    node_centers: np.ndarray - cluster centers through time (timesteps, n_clusters, 3)
+    node_centroids: np.ndarray - cluster centroids through time (timesteps, n_clusters, 3)
+    node_extents: np.ndarray - cluster extents through time (timesteps, n_clusters, 3)
+    model: Qwen2_5_VLForConditionalGeneration - model to use
+    processor: Qwen2_5_VLProcessor - processor to use
+    system_prompt: str - system prompt to use
+    """
+    assert (
+        len(adjacency_matrices)
+        == len(node_centers)
+        == len(node_centroids)
+        == len(node_extents)
+    ), "timestep mismatch"
+
+    # node feat indices correspond to cluster ids
+    node_feat_indices = sorted(list(node_feats.keys()), key=lambda x: int(x))
+    node_feats = [node_feats[idx] for idx in node_feat_indices]
+    node_feats = [i[timestep_idx] for i in node_feats]
+    A = adjacency_matrices[timestep_idx]
+    centroids = node_centroids[timestep_idx]
+    extents = node_extents[timestep_idx]
+
+    graph_content = []
+    graph_content.append(
+        {
+            "type": "text",
+            "text": '<spatial-graph>\n',
+        }
+    )
+    for n in range(A.shape[0]):
+        graph_content.extend(
+            [
+                {
+                    "type": "text",
+                    "text": f'<node id="{n}">\n',
+                },
+                {
+                    "type": "text",
+                    "text": "<descriptor>",
+                },
+                {
+                    "type": "image",
+                    "image": None,
+                },
+                {
+                    "type": "text",
+                    "text": "</descriptor>\n",
+                },
+                {
+                    "type": "text",
+                    "text": f'<centroid x="{centroids[n][0]:.2f}" y="{centroids[n][1]:.2f}" z="{centroids[n][2]:.2f}"/>\n',
+                },
+                {
+                    "type": "text",
+                    "text": f'<extent x="{extents[n][0]:.2f}" y="{extents[n][1]:.2f}" z="{extents[n][2]:.2f}"/>\n',
+                },
+                {
+                    "type": "text",
+                    "text": "</node>\n",
+                },
+            ]
+        )
+    for n in range(A.shape[0]):
+        for m in range(A.shape[1]):
+            if A[n, m] > 0:
+                graph_content.append(
+                    {
+                        "type": "text",
+                        "text": f'<edge from="{n}" to="{m}" overlap_score="{A[n, m]:.2f}" centroid_distance="{np.linalg.norm(centroids[n] - centroids[m]):.2f}"/>\n',
+                    }
+                )
+    graph_content.append(
+        {
+            "type": "text",
+            "text": "</spatial-graph>\n",
+        }
+    )
+
+    # TODO: adapt question and system_prompt
+    messages = [
+        {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "<scene-graph>\n"},
+                *graph_content,
+                {"type": "text", "text": "</scene-graph>\n"},
+                {"type": "text", "text": "<prompt>"},
+                {"type": "text", "text": question},
+                {"type": "text", "text": "</prompt>\n"},
+                {"type": "text", "text": "\nYour response:\n"},
+            ],
+        },
+    ]
+
+    with open("qwen_messages.json", "w") as fp:
+        json.dump(messages, fp)
+
+    return generate_with_vision_features(
+        messages=messages,
+        vision_features=[torch.Tensor(f) for f in node_feats],
+        model=model,
+        processor=processor,
+        # TODO: increase this?
+        max_tokens=5012,
+    )
 
 def prompt_with_static_graph(
     question: str,
