@@ -1,0 +1,50 @@
+{
+  "0": {
+    "video_id": "video43_00787",
+    "frame_number": 787,
+    "objects": [],
+    "actions": [
+      {
+        "query": "grasper holding gallbladder",
+        "pixel_x": 411,
+        "pixel_y": 261,
+        "pixel_coords_numpy": [
+          261,
+          411
+        ]
+      }
+    ]
+  },
+  "3": {
+    "video_id": "video43_00787",
+    "frame_number": 799,
+    "objects": [],
+    "actions": [
+      {
+        "query": "grasper pulling on gallbladder",
+        "pixel_x": 460,
+        "pixel_y": 184,
+        "pixel_coords_numpy": [
+          184,
+          460
+        ]
+      }
+    ]
+  },
+  "19": {
+    "video_id": "video43_00787",
+    "frame_number": 863,
+    "objects": [
+      {
+        "query": "grasper",
+        "pixel_x": 497,
+        "pixel_y": 94,
+        "pixel_coords_numpy": [
+          94,
+          497
+        ]
+      }
+    ],
+    "actions": []
+  }
+}

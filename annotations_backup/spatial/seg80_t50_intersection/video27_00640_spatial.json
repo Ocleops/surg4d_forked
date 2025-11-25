@@ -1,0 +1,60 @@
+{
+  "10": {
+    "video_id": "video27_00640",
+    "frame_number": 680,
+    "objects": [
+      {
+        "query": "open grasper",
+        "pixel_x": 334,
+        "pixel_y": 275,
+        "pixel_coords_numpy": [
+          275,
+          334
+        ]
+      }
+    ],
+    "actions": []
+  },
+  "13": {
+    "video_id": "video27_00640",
+    "frame_number": 692,
+    "objects": [],
+    "actions": [
+      {
+        "query": "graspers handing over gallbladder",
+        "pixel_x": 443,
+        "pixel_y": 264,
+        "pixel_coords_numpy": [
+          264,
+          443
+        ]
+      }
+    ]
+  },
+  "19": {
+    "video_id": "video27_00640",
+    "frame_number": 716,
+    "objects": [
+      {
+        "query": "open grasper",
+        "pixel_x": 498,
+        "pixel_y": 252,
+        "pixel_coords_numpy": [
+          252,
+          498
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "query": "grasper grasping gallbladder",
+        "pixel_x": 396,
+        "pixel_y": 269,
+        "pixel_coords_numpy": [
+          269,
+          396
+        ]
+      }
+    ]
+  }
+}

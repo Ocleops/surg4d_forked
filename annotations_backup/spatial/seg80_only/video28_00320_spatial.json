@@ -1,0 +1,34 @@
+{
+  "4": {
+    "video_id": "video28_00320",
+    "frame_number": 336,
+    "objects": [],
+    "actions": [
+      {
+        "query": "grasper touching fat",
+        "pixel_x": 497,
+        "pixel_y": 324,
+        "pixel_coords_numpy": [
+          324,
+          497
+        ]
+      }
+    ]
+  },
+  "19": {
+    "video_id": "video28_00320",
+    "frame_number": 396,
+    "objects": [
+      {
+        "query": "grasper tip",
+        "pixel_x": 375,
+        "pixel_y": 262,
+        "pixel_coords_numpy": [
+          262,
+          375
+        ]
+      }
+    ],
+    "actions": []
+  }
+}

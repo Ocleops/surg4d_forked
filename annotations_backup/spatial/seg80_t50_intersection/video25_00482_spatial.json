@@ -1,0 +1,18 @@
+{
+  "3": {
+    "video_id": "video25_00482",
+    "frame_number": 494,
+    "objects": [],
+    "actions": [
+      {
+        "query": "grasper squeezing gallbladder",
+        "pixel_x": 540,
+        "pixel_y": 293,
+        "pixel_coords_numpy": [
+          293,
+          540
+        ]
+      }
+    ]
+  }
+}

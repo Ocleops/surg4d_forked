@@ -1,0 +1,34 @@
+{
+  "6": {
+    "video_id": "video01_00240",
+    "frame_number": 264,
+    "objects": [
+      {
+        "query": "grasper",
+        "pixel_x": 296,
+        "pixel_y": 243,
+        "pixel_coords_numpy": [
+          243,
+          296
+        ]
+      }
+    ],
+    "actions": []
+  },
+  "12": {
+    "video_id": "video01_00240",
+    "frame_number": 288,
+    "objects": [],
+    "actions": [
+      {
+        "query": "grasper grasping gallbladder",
+        "pixel_x": 358,
+        "pixel_y": 253,
+        "pixel_coords_numpy": [
+          253,
+          358
+        ]
+      }
+    ]
+  }
+}

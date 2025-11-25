@@ -1,0 +1,75 @@
+{
+  "1": {
+    "video_id": "video18_00979",
+    "frame_number": 1007,
+    "objects": [
+      {
+        "query": "grasper",
+        "pixel_x": 296,
+        "pixel_y": 119,
+        "pixel_coords_numpy": [
+          119,
+          296
+        ]
+      },
+      {
+        "query": "l-hook electrocautery",
+        "pixel_x": 523,
+        "pixel_y": 274,
+        "pixel_coords_numpy": [
+          274,
+          523
+        ]
+      }
+    ],
+    "actions": []
+  },
+  "2": {
+    "video_id": "video18_00979",
+    "frame_number": 1011,
+    "objects": [],
+    "actions": [
+      {
+        "query": "gallbladder being pulled by grasper",
+        "pixel_x": 370,
+        "pixel_y": 162,
+        "pixel_coords_numpy": [
+          162,
+          370
+        ]
+      }
+    ]
+  },
+  "12": {
+    "video_id": "video18_00979",
+    "frame_number": 1051,
+    "objects": [],
+    "actions": [
+      {
+        "query": "l-hook electrocautery incision in gallbladder",
+        "pixel_x": 334,
+        "pixel_y": 268,
+        "pixel_coords_numpy": [
+          268,
+          334
+        ]
+      }
+    ]
+  },
+  "17": {
+    "video_id": "video18_00979",
+    "frame_number": 991,
+    "objects": [
+      {
+        "query": "grasper tip",
+        "pixel_x": 421,
+        "pixel_y": 234,
+        "pixel_coords_numpy": [
+          234,
+          421
+        ]
+      }
+    ],
+    "actions": []
+  }
+}

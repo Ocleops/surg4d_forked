@@ -1,0 +1,66 @@
+{
+  "1": {
+    "video_id": "video20_03260",
+    "frame_number": 3264,
+    "objects": [
+      {
+        "query": "l-hook electrocautery tip",
+        "pixel_x": 543,
+        "pixel_y": 333,
+        "pixel_coords_numpy": [
+          333,
+          543
+        ]
+      }
+    ],
+    "actions": []
+  },
+  "14": {
+    "video_id": "video20_03260",
+    "frame_number": 3316,
+    "objects": [],
+    "actions": [
+      {
+        "query": "l-hook electrocautery poking tissue",
+        "pixel_x": 544,
+        "pixel_y": 329,
+        "pixel_coords_numpy": [
+          329,
+          544
+        ]
+      }
+    ]
+  },
+  "15": {
+    "video_id": "video20_03260",
+    "frame_number": 3320,
+    "objects": [
+      {
+        "query": "grasper tip",
+        "pixel_x": 454,
+        "pixel_y": 257,
+        "pixel_coords_numpy": [
+          257,
+          454
+        ]
+      }
+    ],
+    "actions": []
+  },
+  "19": {
+    "video_id": "video20_03260",
+    "frame_number": 3336,
+    "objects": [],
+    "actions": [
+      {
+        "query": "grasper holding gallbladder",
+        "pixel_x": 437,
+        "pixel_y": 236,
+        "pixel_coords_numpy": [
+          236,
+          437
+        ]
+      }
+    ]
+  }
+}

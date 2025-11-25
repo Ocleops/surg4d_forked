@@ -1,0 +1,50 @@
+{
+  "0": {
+    "video_id": "video17_01563",
+    "frame_number": 1563,
+    "objects": [
+      {
+        "query": "grasper tip",
+        "pixel_x": 282,
+        "pixel_y": 227,
+        "pixel_coords_numpy": [
+          227,
+          282
+        ]
+      }
+    ],
+    "actions": []
+  },
+  "1": {
+    "video_id": "video17_01563",
+    "frame_number": 1567,
+    "objects": [],
+    "actions": [
+      {
+        "query": "grasper pulling the gallbladder",
+        "pixel_x": 287,
+        "pixel_y": 234,
+        "pixel_coords_numpy": [
+          234,
+          287
+        ]
+      }
+    ]
+  },
+  "18": {
+    "video_id": "video17_01563",
+    "frame_number": 1635,
+    "objects": [
+      {
+        "query": "tip of the gallbladder",
+        "pixel_x": 236,
+        "pixel_y": 206,
+        "pixel_coords_numpy": [
+          206,
+          236
+        ]
+      }
+    ],
+    "actions": []
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "13": {
+    "video_id": "video48_00641",
+    "frame_number": 693,
+    "objects": [
+      {
+        "query": "grasper",
+        "pixel_x": 431,
+        "pixel_y": 136,
+        "pixel_coords_numpy": [
+          136,
+          431
+        ]
+      }
+    ],
+    "actions": []
+  },
+  "19": {
+    "video_id": "video48_00641",
+    "frame_number": 717,
+    "objects": [],
+    "actions": [
+      {
+        "query": "grasper touching liver",
+        "pixel_x": 525,
+        "pixel_y": 109,
+        "pixel_coords_numpy": [
+          109,
+          525
+        ]
+      }
+    ]
+  }
+}
