@@ -10,6 +10,7 @@ defaults:
   - _self_
   
 
+# for run_pipeline.py
 skip_preprocessing: true
 skip_feature_extraction: true
 skip_autoencoder: true
@@ -21,8 +22,8 @@ skip_compute_metrics: false
 cholec80_root: data/cholec80
 cholecseg8k_root: data/cholecseg8k
 cholect50_root: data/cholect50
-preprocessed_root: data/preprocessed/final_scenes_qwen3_False
-output_root: output/final_scenes_qwen3_False
+preprocessed_root: data/preprocessed/initial
+output_root: output/initial
 
 whole_pipeline_clips_sequentially: true
 
