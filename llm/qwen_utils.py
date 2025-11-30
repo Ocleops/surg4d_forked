@@ -4,19 +4,79 @@ import json
 import re
 import numpy as np
 from PIL import Image
-from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor, Qwen3VLForConditionalGeneration, Qwen3VLProcessor
+from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor, Qwen3VLProcessor
+from transformers.models.qwen2_vl.image_processing_qwen2_vl import smart_resize
 from typing import Dict, List, Optional, Union, Any, Callable, Tuple
 from functools import lru_cache
 from transformers.utils.quantization_config import BitsAndBytesConfig
 
-from .patched_qwen import PatchedQwen2_5_VLForConditionalGeneration
+from .patched_qwen import PatchedQwen2_5_VLForConditionalGeneration, PatchedQwen3VLForConditionalGeneration
 
-QWEN25VL_PATCH_SIZE = 14
-QWEN25VL_SPATIAL_MERGE = 2
-QWEN25VL_EFFECTIVE_PATCH_SIZE = QWEN25VL_PATCH_SIZE * QWEN25VL_SPATIAL_MERGE
+# Qwen vision encoder constants by version
+# Note: Both Qwen2.5 and Qwen3 use smart_resize() which resizes (not crops/pads)
+# images to dimensions divisible by (patch_size × spatial_merge).
+# The main difference: Qwen2.5 has an extra-patch quirk when (dim // patch_size) % 4 == 3.
+QWEN_CONSTANTS = {
+    "qwen25": {
+        "patch_size": 14,
+        "spatial_merge": 2,
+        "effective_patch_size": 28,  # 14 * 2
+        "num_deepstack_layers": 0,
+    },
+    "qwen3": {
+        "patch_size": 16,
+        "spatial_merge": 2,
+        "effective_patch_size": 32,  # 16 * 2
+        "num_deepstack_layers": 3,
+    },
+}
+
+QWEN_VERSIONS = tuple(QWEN_CONSTANTS.keys())
 
 
-def get_patched_qwen(
+def qwen3_deepstack_to_cat(
+    main_feats: torch.Tensor,
+    deepstack_feats: List[torch.Tensor],
+) -> torch.Tensor:
+    """Concatenate main features with deepstack features for storage/autoencoder.
+
+    Args:
+        main_feats: Main vision features, shape (N, hidden_dim)
+        deepstack_feats: List of 3 deepstack feature tensors, each (N, hidden_dim)
+
+    Returns:
+        Concatenated tensor of shape (N, hidden_dim * 4)
+        Layout: [main | d0 | d1 | d2]
+    """
+    num_deepstack = QWEN_CONSTANTS["qwen3"]["num_deepstack_layers"]
+    assert len(deepstack_feats) == num_deepstack, (
+        f"Expected {num_deepstack} deepstack tensors, got {len(deepstack_feats)}"
+    )
+    return torch.cat([main_feats, *deepstack_feats], dim=-1)
+
+
+def qwen3_cat_to_deepstack(
+    concat_feats: torch.Tensor,
+) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+    """Split concatenated features back into main + deepstack for inference.
+
+    Args:
+        concat_feats: Concatenated tensor of shape (N, hidden_dim * 4)
+                      Layout: [main | d0 | d1 | d2]
+
+    Returns:
+        Tuple of (main_feats, deepstack_feats) where:
+            main_feats: shape (N, hidden_dim)
+            deepstack_feats: list of 3 tensors, each (N, hidden_dim)
+    """
+    num_deepstack = QWEN_CONSTANTS["qwen3"]["num_deepstack_layers"]
+    chunks = concat_feats.chunk(num_deepstack + 1, dim=-1)
+    main_feats = chunks[0]
+    deepstack_feats = list(chunks[1:])
+    return main_feats, deepstack_feats
+
+
+def get_patched_qwen25(
     use_bnb_4bit: bool = False,
     use_bnb_8bit: bool = False,
     attn_implementation: str = "sdpa",  # "flash_attention_2" or "sdpa"
@@ -65,19 +125,130 @@ def get_patched_qwen(
     return model, processor
 
 
+def get_patched_qwen3(
+    use_bnb_4bit: bool = False,
+    use_bnb_8bit: bool = False,
+    attn_implementation: str = "sdpa",  # "flash_attention_2" or "sdpa"
+    torch_dtype: torch.dtype = torch.bfloat16,
+    device_map: Union[str, Dict[str, str]] = "auto",
+    max_memory: Optional[Dict[str, str]] = None,
+):
+    """Get a patched Qwen3VL model/processor that supports raw patch features.
+
+    Uses inheritance-based patching via __class__ swapping after from_pretrained.
+    Parameters allow enabling weight quantization and optimized attention without editing Transformers.
+    """
+    model_path = "Qwen/Qwen3-VL-8B-Instruct"
+
+    quantization_config = None
+    if use_bnb_4bit:
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=torch_dtype,
+        )
+    elif use_bnb_8bit:
+        quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+
+    fp_kwargs: Dict[str, Any] = {
+        "dtype": torch_dtype,
+        "device_map": device_map,
+        "low_cpu_mem_usage": True,
+        "attn_implementation": attn_implementation,
+    }
+    if quantization_config is not None:
+        fp_kwargs["quantization_config"] = quantization_config
+    if max_memory is not None:
+        fp_kwargs["max_memory"] = max_memory
+
+    model = PatchedQwen3VLForConditionalGeneration.from_pretrained(
+        model_path,
+        **fp_kwargs,
+    )
+
+    processor = Qwen3VLProcessor.from_pretrained(model_path)
+    # Prefer new cache format for memory-efficient caches
+    model.generation_config.return_legacy_cache = False
+    model.eval()
+    return model, processor
+
+
+def get_patched_qwen(
+    qwen_version: str,
+    use_bnb_4bit: bool = False,
+    use_bnb_8bit: bool = False,
+    attn_implementation: str = "sdpa",
+    torch_dtype: torch.dtype = torch.bfloat16,
+    device_map: Union[str, Dict[str, str]] = "auto",
+    max_memory: Optional[Dict[str, str]] = None,
+):
+    """Get a patched Qwen model/processor based on version string.
+
+    Args:
+        qwen_version: Either "qwen25" or "qwen3"
+        Other args: Same as get_patched_qwen25/get_patched_qwen3
+
+    Returns:
+        Tuple of (model, processor)
+    """
+    if qwen_version == "qwen25":
+        return get_patched_qwen25(
+            use_bnb_4bit=use_bnb_4bit,
+            use_bnb_8bit=use_bnb_8bit,
+            attn_implementation=attn_implementation,
+            torch_dtype=torch_dtype,
+            device_map=device_map,
+            max_memory=max_memory,
+        )
+    elif qwen_version == "qwen3":
+        return get_patched_qwen3(
+            use_bnb_4bit=use_bnb_4bit,
+            use_bnb_8bit=use_bnb_8bit,
+            attn_implementation=attn_implementation,
+            torch_dtype=torch_dtype,
+            device_map=device_map,
+            max_memory=max_memory,
+        )
+    else:
+        raise ValueError(f"Unknown qwen_version: {qwen_version}. Must be one of {QWEN_VERSIONS}")
+
+
 def qwen_encode_image(
     image: Image.Image,
-    model: Qwen2_5_VLForConditionalGeneration,
-    processor: Qwen2_5_VLProcessor,
+    model,
+    processor,
+    qwen_version: str,
 ):
-    image_inputs = processor.image_processor(  # type:ignore
-        images=[image], return_tensors="pt"
-    )
+    """Encode an image through a Qwen vision encoder.
+
+    Args:
+        image: PIL Image to encode
+        model: Qwen model (either Qwen2.5-VL or Qwen3-VL)
+        processor: Corresponding processor
+        qwen_version: Either "qwen25" or "qwen3"
+
+    Returns:
+        For qwen25: Tensor of shape (N, hidden_dim)
+        For qwen3: Concatenated tensor of shape (N, hidden_dim * 4) containing
+                   [main | deepstack0 | deepstack1 | deepstack2]
+    """
+    image_inputs = processor.image_processor(images=[image], return_tensors="pt")
     pixel_values = image_inputs["pixel_values"].to(model.device).to(torch.bfloat16)
     image_grid_thw = image_inputs["image_grid_thw"].to(model.device)
+
     with torch.no_grad():
-        feats = model.visual(pixel_values, image_grid_thw)
-        return feats
+        if qwen_version == "qwen25":
+            feats = model.visual(pixel_values, image_grid_thw)
+            return feats
+        elif qwen_version == "qwen3":
+            # Qwen3 visual returns (main_embeds, deepstack_embeds_list)
+            main_embeds_tuple, deepstack_embeds = model.get_image_features(pixel_values, image_grid_thw)
+            main_feats = torch.cat(main_embeds_tuple, dim=0)
+            # Concatenate into single tensor for consistent storage format
+            return qwen3_deepstack_to_cat(main_feats, deepstack_embeds)
+        else:
+            raise ValueError(f"Unknown qwen_version: {qwen_version}. Must be one of {QWEN_VERSIONS}")
 
 
 # This function takes in an RGB image  and a prompt
@@ -189,13 +360,15 @@ def model_inputs(
     )
 
     # create mock images so the processor precomputes grid; features are passed as-is
+    # TODO: this hardcodes qwen25 - should be parameterized if using qwen3
+    effective_patch_size = QWEN_CONSTANTS["qwen25"]["effective_patch_size"]
     mock_images: List[Image.Image] = []
     for i in range(len(vision_features)):
         n = int(vision_features[i].shape[0])
         w, h = closest_factor_pair(n)
         assert w * h == n
         mock_img = Image.new(
-            "RGB", (QWEN25VL_EFFECTIVE_PATCH_SIZE * w, QWEN25VL_EFFECTIVE_PATCH_SIZE * h), color="red"
+            "RGB", (effective_patch_size * w, effective_patch_size * h), color="red"
         )
         mock_images.append(mock_img)
 
@@ -930,33 +1103,45 @@ def crop_patch_features(patch_feat: torch.Tensor, cw, ch, cx1, cx2, cy1, cy2):
     )
 
 
-def get_patch_hw(im_height, im_width):
+def get_patch_hw(im_height: int, im_width: int, qwen_version: str) -> Tuple[int, int]:
+    """Get patchgrid dimensions for given image dimensions.
+
+    Uses smart_resize logic: round(dim / factor) * factor to get resized dimensions,
+    then divide by factor to get patch count.
+
+    Args:
+        im_height: Image height in pixels
+        im_width: Image width in pixels
+        qwen_version: Either "qwen25" or "qwen3"
+
+    Returns:
+        Tuple of (patches_height, patches_width)
     """
-    Get qwen2.5 vl patchgrid dims for given image dims.
-    """
-    patches_height = im_height // QWEN25VL_EFFECTIVE_PATCH_SIZE + (
-        (im_height // QWEN25VL_PATCH_SIZE) % 4 == 3
-    )  # cursed behavior
-    patches_width = im_width // QWEN25VL_EFFECTIVE_PATCH_SIZE + (
-        (im_width // QWEN25VL_PATCH_SIZE) % 4 == 3
-    )  # -,,-
-    return patches_height, patches_width
+    factor = QWEN_CONSTANTS[qwen_version]["effective_patch_size"]
+    resized_h, resized_w = smart_resize(im_height, im_width, factor=factor, min_pixels=1, max_pixels=10**9)
+    return resized_h // factor, resized_w // factor
 
 
-def get_patch_segmasks(im_height, im_width):
-    """generate an instance segmentation mask
-    where each instance corresponds to one qwen 2.5 vl vision encoder patch"""
-    patches_height, patches_width = get_patch_hw(im_height, im_width)
+def get_patch_segmasks(im_height: int, im_width: int, qwen_version: str) -> torch.Tensor:
+    """Generate an instance segmentation mask where each instance corresponds to one vision encoder patch.
+
+    Args:
+        im_height: Image height in pixels
+        im_width: Image width in pixels
+        qwen_version: Either "qwen25" or "qwen3"
+
+    Returns:
+        Tensor of shape (resized_H, resized_W) with patch indices at each pixel
+    """
+    factor = QWEN_CONSTANTS[qwen_version]["effective_patch_size"]
+    resized_h, resized_w = smart_resize(im_height, im_width, factor=factor, min_pixels=1, max_pixels=10**9)
     rowcol = torch.stack(
         torch.meshgrid(
-            torch.arange(
-                patches_height * QWEN25VL_EFFECTIVE_PATCH_SIZE
-                + ((im_height // QWEN25VL_PATCH_SIZE) % 4 == 3) * QWEN25VL_PATCH_SIZE
-            ),
-            torch.arange(patches_width * QWEN25VL_EFFECTIVE_PATCH_SIZE)
-            + ((im_width // QWEN25VL_PATCH_SIZE) % 4 == 3) * QWEN25VL_PATCH_SIZE,
+            torch.arange(resized_h),
+            torch.arange(resized_w),
             indexing="ij",
         )
     )
-    patch_coords = torch.floor_divide(rowcol, QWEN25VL_EFFECTIVE_PATCH_SIZE)
-    return patch_coords[0] * patches_width + patch_coords[1]
+    patch_coords = torch.floor_divide(rowcol, factor)
+    patches_per_row = resized_w // factor
+    return patch_coords[0] * patches_per_row + patch_coords[1]

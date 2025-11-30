@@ -1,3 +1,5 @@
+qwen_version: qwen25  # qwen25 or qwen3
+
 bnb_4bit: false
 bnb_8bit: false
 

@@ -6,17 +6,18 @@ import torch
 import numpy as np
 from omegaconf import DictConfig
 from tqdm import tqdm
-from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
 
-from llm.qwen_vl import get_patched_qwen, qwen_encode_image, get_patch_segmasks
+from llm.qwen_utils import get_patched_qwen, qwen_encode_image, get_patch_segmasks
 
 
 def extract_qwen_features(
     clip: DictConfig,
     cfg: DictConfig,
-    model: Qwen2_5_VLForConditionalGeneration,
-    processor: Qwen2_5_VLProcessor,
+    model,
+    processor,
 ):
+    qwen_version = cfg.feature_extraction.qwen_version
+
     clip_dir = Path(cfg.preprocessed_root) / clip.name
     img_dir = clip_dir / "images"
     seg_dir = clip_dir / (
@@ -35,10 +36,9 @@ def extract_qwen_features(
         image = Image.open(img_dir / f"{frame_stem}.jpg")
         frame_stem_just_number = frame_stem.replace("frame_", "")
 
-        # patch wise
-        feats = qwen_encode_image(image, model, processor)
+        feats = qwen_encode_image(image, model, processor, qwen_version)
         qwen_feats = feats.detach().float().cpu().numpy()
-        patch_map = get_patch_segmasks(image.height, image.width).unsqueeze(0).numpy()
+        patch_map = get_patch_segmasks(image.height, image.width, qwen_version).unsqueeze(0).numpy()
 
         np.save(patch_dir / f"{frame_stem_just_number}_f.npy", qwen_feats)
         np.save(patch_dir / f"{frame_stem_just_number}_s.npy", patch_map)
@@ -79,11 +79,12 @@ def main(cfg: DictConfig):
         torch.cuda.manual_seed_all(42)
 
     model, processor = get_patched_qwen(
+        qwen_version=cfg.feature_extraction.qwen_version,
         use_bnb_4bit=cfg.feature_extraction.bnb_4bit,
         use_bnb_8bit=cfg.feature_extraction.bnb_8bit,
     )
 
-    for clip in tqdm(cfg.clips, desc="Generating qwen feats", unit="clip"):
+    for clip in tqdm(cfg.clips, desc=f"Generating {cfg.feature_extraction.qwen_version} feats", unit="clip"):
         extract_qwen_features(clip, cfg, model, processor)
 
 
