@@ -158,9 +158,6 @@ def main():
         temporal_config=temporal_config,
         spatial_config=spatial_config,
         spatiotemporal_config=spatiotemporal_config,
-        model_name="qwen",
-        # TODO: maybe make conditional but probably fixing to 3 once we have merged current remote and everything works
-        qwen_version="qwen2.5",
         use_4bit_quantization=args.use_4bit
     )
 
