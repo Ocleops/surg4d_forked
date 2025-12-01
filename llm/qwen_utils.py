@@ -4,13 +4,21 @@ import json
 import re
 import numpy as np
 from PIL import Image
-from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor, Qwen3VLForConditionalGeneration, Qwen3VLProcessor
+from transformers import (
+    Qwen2_5_VLForConditionalGeneration,
+    Qwen2_5_VLProcessor,
+    Qwen3VLForConditionalGeneration,
+    Qwen3VLProcessor,
+)
 from transformers.models.qwen2_vl.image_processing_qwen2_vl import smart_resize
 from typing import Dict, List, Optional, Union, Any, Callable, Tuple
 from functools import lru_cache
 from transformers.utils.quantization_config import BitsAndBytesConfig
 
-from .patched_qwen import PatchedQwen2_5_VLForConditionalGeneration, PatchedQwen3VLForConditionalGeneration
+from .patched_qwen import (
+    PatchedQwen2_5_VLForConditionalGeneration,
+    PatchedQwen3VLForConditionalGeneration,
+)
 
 # Qwen vision encoder constants by version
 # Note: Both Qwen2.5 and Qwen3 use smart_resize() which resizes (not crops/pads)
@@ -244,7 +252,9 @@ def get_patched_qwen(
             max_memory=max_memory,
         )
     else:
-        raise ValueError(f"Unknown qwen_version: {qwen_version}. Must be one of {QWEN_VERSIONS}")
+        raise ValueError(
+            f"Unknown qwen_version: {qwen_version}. Must be one of {QWEN_VERSIONS}"
+        )
 
 
 def qwen_encode_image(
@@ -276,12 +286,16 @@ def qwen_encode_image(
             return feats
         elif qwen_version == "qwen3":
             # Qwen3 visual returns (main_embeds, deepstack_embeds_list)
-            main_embeds_tuple, deepstack_embeds = model.get_image_features(pixel_values, image_grid_thw)
+            main_embeds_tuple, deepstack_embeds = model.get_image_features(
+                pixel_values, image_grid_thw
+            )
             main_feats = torch.cat(main_embeds_tuple, dim=0)
             # Concatenate into single tensor for consistent storage format
             return qwen3_deepstack_to_cat(main_feats, deepstack_embeds)
         else:
-            raise ValueError(f"Unknown qwen_version: {qwen_version}. Must be one of {QWEN_VERSIONS}")
+            raise ValueError(
+                f"Unknown qwen_version: {qwen_version}. Must be one of {QWEN_VERSIONS}"
+            )
 
 
 # This function takes in an RGB image  and a prompt
@@ -395,24 +409,37 @@ def model_inputs(
         messages, tokenize=False, add_generation_prompt=True, tools=tools
     )
 
-    # create mock images so the processor precomputes grid; features are passed as-is
+    # create mock images such that their size corresponds to
+    # the correct number of tokens after tokenizing and spatial merging
+    # (we cannot just overwrite image_grid_thw because
+    # input ids already contains placeholder vision tokens)
     effective_patch_size = QWEN_CONSTANTS[qwen_version]["effective_patch_size"]
     mock_images: List[Image.Image] = []
-    for i in range(len(vision_features)):
-        n = int(vision_features[i].shape[0])
+    for feat in vision_features:
+        n = int(feat.shape[0])
         w, h = closest_factor_pair(n)
-        assert w * h == n
-        mock_img = Image.new(
-            "RGB", (effective_patch_size * w, effective_patch_size * h), color="red"
-        )
+        assert w * h == n, f"Feature count {n} doesn't factor into rectangle"
+        img_w = w * effective_patch_size
+        img_h = h * effective_patch_size
+        mock_img = Image.new("RGB", (img_w, img_h), color="red")
         mock_images.append(mock_img)
 
+    # we need to temporarily override min and max pixel counts
+    # to make sure the processor does not resize mock images
+    # internally via smart_resize
+    orig_min_pixels = processor.image_processor.min_pixels
+    orig_max_pixels = processor.image_processor.max_pixels
+    processor.image_processor.min_pixels = 1
+    processor.image_processor.max_pixels = 10**12
     inputs = processor(
-        text=[text],
-        images=[mock_images],
+        text=text,
+        images=mock_images,
         padding=True,
         return_tensors="pt",
     )
+    processor.image_processor.min_pixels = orig_min_pixels
+    processor.image_processor.max_pixels = orig_max_pixels
+
     return inputs
 
 
@@ -441,10 +468,14 @@ def generate_with_vision_features(
     """
     # For Qwen3, we need to split concatenated features into main + deepstack
     if qwen_version == "qwen3":
-        main_features, deepstack_features = qwen3_format_multiple_deepstack_features(vision_features)
+        main_features, deepstack_features = qwen3_format_multiple_deepstack_features(
+            vision_features
+        )
 
         # preprocess and generate
-        inputs = model_inputs(messages, main_features, processor, qwen_version=qwen_version).to(model.device)
+        inputs = model_inputs(
+            messages, main_features, processor, qwen_version=qwen_version
+        ).to(model.device)
 
         generated_ids = model.generate(
             **inputs,
@@ -455,7 +486,9 @@ def generate_with_vision_features(
         )
     else:
         # Qwen2.5 path
-        inputs = model_inputs(messages, vision_features, processor, qwen_version=qwen_version).to(model.device)
+        inputs = model_inputs(
+            messages, vision_features, processor, qwen_version=qwen_version
+        ).to(model.device)
 
         generated_ids = model.generate(
             **inputs,
@@ -550,7 +583,9 @@ def generate_with_vision_features_agentic(
 
     # Prepare features based on qwen version
     if qwen_version == "qwen3":
-        main_features, deepstack_features = qwen3_format_multiple_deepstack_features(vision_features)
+        main_features, deepstack_features = qwen3_format_multiple_deepstack_features(
+            vision_features
+        )
         features_for_inputs = main_features
     else:
         features_for_inputs = vision_features
@@ -563,7 +598,11 @@ def generate_with_vision_features_agentic(
 
         # Generate response with tools
         inputs = model_inputs(
-            current_messages, features_for_inputs, processor, qwen_version=qwen_version, tools=tool_specs
+            current_messages,
+            features_for_inputs,
+            processor,
+            qwen_version=qwen_version,
+            tools=tool_specs,
         ).to(model.device)
 
         if qwen_version == "qwen3":
@@ -1198,11 +1237,15 @@ def get_patch_hw(im_height: int, im_width: int, qwen_version: str) -> Tuple[int,
         Tuple of (patches_height, patches_width)
     """
     factor = QWEN_CONSTANTS[qwen_version]["effective_patch_size"]
-    resized_h, resized_w = smart_resize(im_height, im_width, factor=factor, min_pixels=1, max_pixels=10**9)
+    resized_h, resized_w = smart_resize(
+        im_height, im_width, factor=factor, min_pixels=1, max_pixels=10**9
+    )
     return resized_h // factor, resized_w // factor
 
 
-def get_patch_segmasks(im_height: int, im_width: int, qwen_version: str) -> torch.Tensor:
+def get_patch_segmasks(
+    im_height: int, im_width: int, qwen_version: str
+) -> torch.Tensor:
     """Generate an instance segmentation mask where each instance corresponds to one vision encoder patch.
 
     Args:
@@ -1214,7 +1257,9 @@ def get_patch_segmasks(im_height: int, im_width: int, qwen_version: str) -> torc
         Tensor of shape (resized_H, resized_W) with patch indices at each pixel
     """
     factor = QWEN_CONSTANTS[qwen_version]["effective_patch_size"]
-    resized_h, resized_w = smart_resize(im_height, im_width, factor=factor, min_pixels=1, max_pixels=10**9)
+    resized_h, resized_w = smart_resize(
+        im_height, im_width, factor=factor, min_pixels=1, max_pixels=10**9
+    )
     rowcol = torch.stack(
         torch.meshgrid(
             torch.arange(resized_h),
