@@ -52,7 +52,7 @@ spectral_clustering:
 min_gaussians_per_cluster: 150
 
 # how many vision features represent each cluster
-max_features_per_cluster: 40
+max_features_per_cluster: 40 # todo it might make sense to make sure these factor to a reasonable aspect ratio
 min_features_per_cluster: 4
 
 # lf decoding
@@ -70,7 +70,7 @@ random_seed: 1234
 
 # spatial grounding feature extraction
 spatial_grounding:
-  n_splat_points: 1000
+  n_splat_points: 1000 # todo make sure this is a reasonable number of points for the aspect ratio of the features
   n_cluster_points: 100
 
 # Mask-based cluster filtering of clusters by comparing rendered cluster masks
