@@ -1,6 +1,5 @@
 import hydra
 from omegaconf import DictConfig
-import os
 import random
 import numpy as np
 import torch
@@ -199,8 +198,36 @@ def compute_spatial_metrics(cfg: DictConfig):
             out_m["counts"][group] = per_layer_counts
         summary["methods"][method] = out_m
 
+    # Create overview: best @1 score for each method in "all" category
+    overview = {}
+    for method in methods:
+        if method not in dataset_stats:
+            continue
+        mstats = dataset_stats[method]
+        all_group = mstats.get("all", {})
+        
+        best_layer = None
+        best_score = float("inf")
+        
+        for lkey, stat in all_group.items():
+            total_count = int(stat["count"])  # type: ignore[index]
+            sums_arr = stat["sum"]  # type: ignore[index]
+            if total_count > 0:
+                avg_arr = sums_arr / total_count  # type: ignore[operator]
+                # Get the @1 score (first element in ks)
+                score_at_1 = float(avg_arr[0])
+                if score_at_1 < best_score:
+                    best_score = score_at_1
+                    best_layer = lkey
+        
+        if best_layer is not None:
+            overview[method] = {
+                "best_min_l2@1": round(best_score, 2),
+                "best_layer": best_layer
+            }
+
     with aggregated_file.open("w") as f:
-        json.dump({"summary": summary}, f, indent=2)
+        json.dump({"overview": overview, "summary": summary}, f, indent=2)
 
 def compute_temporal_metrics(cfg: DictConfig):
     if cfg.compute_metrics.temporal is None:

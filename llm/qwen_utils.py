@@ -369,6 +369,7 @@ def ask_qwen_about_image_features(
     model: Qwen2_5_VLForConditionalGeneration,
     processor: Qwen2_5_VLProcessor,
     system_prompt: str = "You are a medical assistant designed to aid medical practitioners during a cholecystectomy procedure. The surgeon user will ask you a question and show you their current situation, and you give a concise answer.",
+    max_tokens: int = 128,
 ):
     messages = [
         {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
@@ -381,7 +382,7 @@ def ask_qwen_about_image_features(
         },
     ]
     return generate_with_vision_features(
-        messages, [image_features], model, processor, 128
+        messages, [image_features], model, processor, max_tokens=max_tokens
     )
 
 

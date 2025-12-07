@@ -94,7 +94,15 @@ def node_distances_through_time(
         }
 
     distances = [
-        {"timestep": t, "distance": round(float(np.linalg.norm(centroids[t, node_id_1] - centroids[t, node_id_2])), 4)}
+        {
+            "timestep": t,
+            "distance": round(
+                float(
+                    np.linalg.norm(centroids[t, node_id_1] - centroids[t, node_id_2])
+                ),
+                4,
+            ),
+        }
         for t in range(n_timesteps)
     ]
 
@@ -165,7 +173,12 @@ def node_overlap_scores_through_time(
         }
 
     overlap_scores = [
-        {"timestep": t, "overlap_score": round(float(bhattacharyya_coeffs[t, node_id_1, node_id_2]), 4)}
+        {
+            "timestep": t,
+            "overlap_score": round(
+                float(bhattacharyya_coeffs[t, node_id_1, node_id_2]), 4
+            ),
+        }
         for t in range(n_timesteps)
     ]
 
@@ -540,6 +553,177 @@ def inspect_scene_at_time(
     }
 
 
+spec_sample_spatial_grid_at_time = {
+    "type": "function",
+    "function": {
+        "name": "sample_spatial_grid_at_time",
+        "description": "Samples the scene at regular 3D spatial locations (voxels) and returns visual descriptors for each location containing scene content. The scene is divided into a grid_size x grid_size x grid_size voxel grid. Only voxels containing scene content are returned. Enables localization of scene content at full scene resolution, and more fine-grained localization through querying a subregion via bbox.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "timestep": {
+                    "type": "integer",
+                    "description": "The timestep at which to sample the scene",
+                },
+                "grid_size": {
+                    "type": "integer",
+                    "description": "Number of voxels per dimension (e.g., grid_size=3 creates a 3x3x3=27 voxel grid). Larger values give finer spatial detail. Maximum value is 5 (125 voxels total).",
+                },
+                "bbox": {
+                    "type": "array",
+                    "description": "Optional bounding box [x_center, y_center, z_center, x_size, y_size, z_size] defining the region to sample. If null/omitted, samples the entire scene.",
+                    "items": {"type": "number"},
+                },
+            },
+            "required": ["timestep", "grid_size"],
+        },
+    },
+}
+
+
+def sample_spatial_grid_at_time(
+    positions: np.ndarray,
+    patch_latents_through_time: np.ndarray,
+    autoencoder: QwenAutoencoder,
+    timestep: int,
+    grid_size: int,
+    bbox: List[float] = None,
+) -> Dict[str, Any]:
+    """Sample the scene at regular 3D spatial locations with visual descriptors per location.
+
+    Each spatial sample (voxel) contains visual descriptors aggregated from all scene content
+    within that location, allowing the agent to spatially query "where is X" by examining
+    descriptors at different locations.
+
+    The scene is divided into grid_size x grid_size x grid_size voxels. Only non-empty
+    voxels (those containing scene content) are returned.
+
+    Args:
+        positions: Gaussian positions through time (T, n_filtered_gaussians, 3)
+        patch_latents_through_time: Latent patch features (T, n_filtered_gaussians, latent_dim)
+        autoencoder: QwenAutoencoder to decode latents to full features
+        timestep: The timestep at which to sample
+        grid_size: Number of voxels per dimension (e.g., 5 creates 5x5x5=125 voxels).
+                   Maximum 10 (1000 voxels total).
+        bbox: Optional [x_center, y_center, z_center, x_size, y_size, z_size].
+              If None, samples the entire scene.
+              NOTE: This format corresponds to Omni3D bbox format without rotation,
+              which Qwen3 was trained on - important for paper justification.
+
+    Returns:
+        Dict with "text" (JSON description) and "vision_features" (one tensor per non-empty sample).
+        Text contains sample metadata (bbox, content_density, grid index).
+        Vision features are visual descriptors for scene content at each sampled location.
+        Only non-empty voxels are included in the output.
+    """
+    MAX_GAUSSIANS_PER_VOXEL = 64
+
+    n_timesteps = positions.shape[0]
+
+    # Validate timestep
+    if not (0 <= timestep < n_timesteps):
+        return {
+            "text": json.dumps(
+                {"error": f"timestep={timestep} out of range [0, {n_timesteps})"}
+            )
+        }
+
+    if grid_size <= 0 or grid_size > 5:
+        return {
+            "text": json.dumps(
+                {"error": f"grid_size must be in range [1, 5], got {grid_size}"}
+            )
+        }
+
+    # Get positions at this timestep
+    pos_t = positions[timestep]  # (n_gaussians, 3)
+
+    # Determine bounding box for sampling
+    if bbox is None:
+        # Compute bbox from all scene content
+        min_coords = pos_t.min(axis=0)
+        max_coords = pos_t.max(axis=0)
+        bbox_center = (min_coords + max_coords) / 2
+        bbox_size = max_coords - min_coords
+    else:
+        # Parse provided bbox [x_center, y_center, z_center, x_size, y_size, z_size]
+        if len(bbox) != 6:
+            return {
+                "text": json.dumps(
+                    {"error": f"bbox must have 6 elements, got {len(bbox)}"}
+                )
+            }
+        bbox_center = np.array(bbox[:3])
+        bbox_size = np.array(bbox[3:])
+
+    # Compute voxel size from grid size
+    voxel_size = bbox_size / grid_size
+
+    # Compute grid origin (bottom-left-back corner)
+    grid_min = bbox_center - bbox_size / 2
+
+    # Assign each gaussian to a voxel
+    # For each gaussian position, compute which voxel (i, j, k) it belongs to
+    gaussian_voxel_indices = np.floor((pos_t - grid_min) / voxel_size).astype(int)
+
+    # Build output - iterate over all voxels, skip empty ones
+    voxels_data = []
+    vision_features = []
+
+    for i in range(grid_size):
+        for j in range(grid_size):
+            for k in range(grid_size):
+                voxel_idx = (i, j, k)
+                # Find gaussians in this voxel
+                gaussian_indices = np.where(np.all(gaussian_voxel_indices == voxel_idx, axis=1))[0]
+                if len(gaussian_indices) == 0:
+                    continue
+
+                # Compute this voxel's 3D bounding box
+                voxel_min = grid_min + np.array(voxel_idx) * voxel_size
+                voxel_max = voxel_min + voxel_size
+                voxel_center = (voxel_min + voxel_max) / 2
+
+                # Get latents for all gaussians in this voxel
+                n_gaussians = min(len(gaussian_indices), MAX_GAUSSIANS_PER_VOXEL)
+                voxel_latents = patch_latents_through_time[timestep][gaussian_indices[:n_gaussians]]
+
+                # Decode latents to visual descriptors
+                voxel_visual_descriptor = decode_latents(voxel_latents, autoencoder)
+
+                # Store sample metadata
+                voxels_data.append(
+                    {
+                        "bbox": [round(float(x), 2) for x in voxel_center]
+                        + [round(float(x), 2) for x in voxel_size],
+                        "visual_descriptor": IMAGE_PLACEHOLDER,
+                    }
+                )
+                vision_features.append(voxel_visual_descriptor)
+
+    if len(voxels_data) == 0:
+        return {
+            "text": json.dumps(
+                {"error": f"No voxels containing scene content found for timestep {timestep} and bbox {bbox} - are you sure the bbox is sensible?"}
+            )
+        }
+
+    # Build response
+    response_data = {
+        "timestep": int(timestep),
+        "grid_size": int(grid_size),
+        "query_bbox": [float(x) for x in bbox_center] + [float(x) for x in bbox_size]
+        if bbox is not None
+        else None,
+        "voxels": voxels_data,
+    }
+
+    result = {"text": json.dumps(response_data, indent=2)}
+    if vision_features:
+        result["vision_features"] = vision_features
+    return result
+
+
 class GraphTools:
     """Tool registry for scene graph operations.
 
@@ -649,6 +833,15 @@ class GraphTools:
                     extents=self.distance_o2n(self.extents),
                 ),
                 spec_inspect_scene_at_time,
+            ),
+            "sample_spatial_grid_at_time": (
+                partial(
+                    sample_spatial_grid_at_time,
+                    positions=self.point_o2n(self.positions),
+                    patch_latents_through_time=self.patch_latents_through_time,
+                    autoencoder=self.autoencoder,
+                ),
+                spec_sample_spatial_grid_at_time,
             ),
         }
 

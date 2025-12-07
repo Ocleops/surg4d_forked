@@ -6,7 +6,7 @@ from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
 from typing import List, Dict, Any, Optional, Callable
 import cv2
 import re
-import os
+import json
 
 from benchmark.graph_utils import get_coord_transformations
 from llm.qwen_utils import (
@@ -538,8 +538,6 @@ def _parse_point_from_json(text: str) -> Optional[List[float]]:
       1) locating the first JSON object in the text, attempting json.loads
       2) falling back to regex-based triple float extraction if needed
     """
-    import json as _json
-    import re as _re
 
     # Try to find a JSON object in the text
     try:
@@ -547,7 +545,7 @@ def _parse_point_from_json(text: str) -> Optional[List[float]]:
         last_brace = text.rfind("}")
         if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
             candidate = text[first_brace : last_brace + 1]
-            obj = _json.loads(candidate)
+            obj = json.loads(candidate)
             # Accept either {"x":..,"y":..,"z":..} or {"point":{"x":..,"y":..,"z":..}}
             if isinstance(obj, dict):
                 if all(k in obj for k in ("x", "y", "z")):
@@ -562,13 +560,76 @@ def _parse_point_from_json(text: str) -> Optional[List[float]]:
     return None
 
 
-def _parse_pixel_from_json(text: str) -> Optional[List[float]]:
+def _pixels_to_qwen3_coords(
+    pixels: np.ndarray, img_width: int, img_height: int
+) -> np.ndarray:
+    """Convert pixel coordinates to Qwen3's normalized [0, 1000] coordinate system.
+    
+    Args:
+        pixels: Array of shape (N, 2) with [x, y] pixel coordinates
+        img_width: Original image width in pixels
+        img_height: Original image height in pixels
+    
+    Returns:
+        Array of shape (N, 2) with [x, y] in [0, 1000] range
+    """
+    pixels_array = np.array(pixels)
+    if pixels_array.ndim == 1:
+        pixels_array = pixels_array.reshape(1, -1)
+    
+    # Normalize to [0, 1] then scale to [0, 1000]
+    normalized = pixels_array.copy()
+    normalized[:, 0] = (pixels_array[:, 0] / img_width) * 1000.0
+    normalized[:, 1] = (pixels_array[:, 1] / img_height) * 1000.0
+    
+    return normalized
+
+
+def _qwen3_coords_to_pixels(
+    coords: np.ndarray, img_width: int, img_height: int
+) -> np.ndarray:
+    """Convert Qwen3's normalized [0, 1000] coordinates back to pixel coordinates.
+    
+    Args:
+        coords: Array of shape (N, 2) with [x, y] in [0, 1000] range
+        img_width: Original image width in pixels
+        img_height: Original image height in pixels
+    
+    Returns:
+        Array of shape (N, 2) with [x, y] pixel coordinates
+    """
+    coords_array = np.array(coords)
+    if coords_array.ndim == 1:
+        coords_array = coords_array.reshape(1, -1)
+    
+    # Scale from [0, 1000] to [0, 1] then denormalize to pixel coordinates
+    pixels = coords_array.copy()
+    pixels[:, 0] = (coords_array[:, 0] / 1000.0) * img_width
+    pixels[:, 1] = (coords_array[:, 1] / 1000.0) * img_height
+    
+    return pixels
+
+
+def _parse_pixel_from_json(
+    text: str,
+    qwen_version: str = "qwen25",
+    img_width: Optional[int] = None,
+    img_height: Optional[int] = None,
+) -> Optional[List[float]]:
     """Extract a single 2D pixel [x, y] from a JSON object in the text.
 
     Accepts either {"x":..,"y":..} or {"u":..,"v":..}. Falls back to first two floats.
+    
+    Args:
+        text: Response text containing JSON coordinates
+        qwen_version: Either "qwen25" or "qwen3"
+        img_width: Image width in pixels (required for qwen3)
+        img_height: Image height in pixels (required for qwen3)
+    
+    Returns:
+        Pixel coordinates [x, y] in original image space
     """
     import json as _json
-    import re as _re
 
     try:
         first_brace = text.find("{")
@@ -577,10 +638,24 @@ def _parse_pixel_from_json(text: str) -> Optional[List[float]]:
             candidate = text[first_brace : last_brace + 1]
             obj = _json.loads(candidate)
             if isinstance(obj, dict):
+                coords = None
                 if all(k in obj for k in ("x", "y")):
-                    return [float(obj["x"]), float(obj["y"])]
-                if all(k in obj for k in ("u", "v")):
-                    return [float(obj["u"]), float(obj["v"])]
+                    coords = [float(obj["x"]), float(obj["y"])]
+                elif all(k in obj for k in ("u", "v")):
+                    coords = [float(obj["u"]), float(obj["v"])]
+                
+                if coords is not None:
+                    # For Qwen3, coordinates are in [0, 1000] and need to be scaled back
+                    if qwen_version == "qwen3":
+                        if img_width is None or img_height is None:
+                            raise ValueError(
+                                "img_width and img_height required for qwen3 coordinate conversion"
+                            )
+                        coords_array = _qwen3_coords_to_pixels(
+                            np.array(coords), img_width, img_height
+                        )
+                        return coords_array.flatten().tolist()
+                    return coords
     except Exception:
         pass
 
@@ -1099,6 +1174,7 @@ def graph_agent_predict_query_list(
 
         point3d = _parse_point_from_json(response)
         sanitized_tool_calls = _sanitize_tool_calls(agent_result.get("tool_calls", []))
+        message_history = agent_result.get("message_history", [])
         if point3d is None:
             # 3D failure: fall back to 2D corner pixel (0,0), omit 3D position to avoid skew
             out_item = {
@@ -1106,6 +1182,7 @@ def graph_agent_predict_query_list(
                 "predictions": {},
                 "raw_response": response,
                 "tool_calls": sanitized_tool_calls,
+                "message_history": message_history,
             }
             out_item["predictions"]["0"] = {
                 "pixel_coords": [[0.0, 0.0]],
@@ -1124,6 +1201,7 @@ def graph_agent_predict_query_list(
             "predictions": {},
             "raw_response": response,
             "tool_calls": sanitized_tool_calls,
+            "message_history": message_history,
         }
         # Single mock layer key for graph agent baseline
         out_item["predictions"]["0"] = {
@@ -1374,18 +1452,26 @@ def frame_attn_refine_predict_query_list(
         # Prepare refine prompt with proposals
         question = _format_only_substring(prompt_template_refine, substring)
         if pixels.shape[0] > 0:
+            # For Qwen3, convert pixel proposals to [0, 1000] coordinate system
+            if qwen_version == "qwen3":
+                pixels_for_prompt = _pixels_to_qwen3_coords(
+                    pixels, image.width, image.height
+                )
+            else:
+                pixels_for_prompt = pixels
+            
             if include_scores_in_context:
                 lines = [
                     "Candidate pixel proposals (x, y) with attention scores:",
                     *[
                         f"- {float(p[0]):.1f}, {float(p[1]):.1f} (score={float(s):.4f}, rank={i + 1})"
-                        for i, (p, s) in enumerate(zip(pixels, top_scores_np))
+                        for i, (p, s) in enumerate(zip(pixels_for_prompt, top_scores_np))
                     ],
                 ]
             else:
                 lines = [
                     "Candidate pixel proposals (x, y):",
-                    *[f"- {float(p[0]):.1f}, {float(p[1]):.1f}" for p in pixels],
+                    *[f"- {float(p[0]):.1f}, {float(p[1]):.1f}" for p in pixels_for_prompt],
                 ]
             question = question + "\n\n" + "\n".join(lines)
 
@@ -1396,9 +1482,15 @@ def frame_attn_refine_predict_query_list(
             model=model,
             processor=processor,
             system_prompt=system_prompt_refine,
+            max_tokens=5012,
         )
 
-        px = _parse_pixel_from_json(response)
+        px = _parse_pixel_from_json(
+            response,
+            qwen_version=qwen_version,
+            img_width=image.width,
+            img_height=image.height,
+        )
         if px is None:
             # fallback to the top-1 proposal
             if pixels.shape[0] > 0:
@@ -1546,6 +1638,7 @@ def frame_direct_predict_query_list(
     image: Image.Image,
     prompt_template: str,
     system_prompt: str,
+    qwen_version: str = "qwen25",
 ):
     outputs = []
     for query in queries_list:
@@ -1558,9 +1651,15 @@ def frame_direct_predict_query_list(
             model=model,
             processor=processor,
             system_prompt=system_prompt,
+            max_tokens=5012,
         )
 
-        px = _parse_pixel_from_json(response)
+        px = _parse_pixel_from_json(
+            response,
+            qwen_version=qwen_version,
+            img_width=image.width,
+            img_height=image.height,
+        )
         if px is None:
             px = [0.0, 0.0]
 
@@ -1605,6 +1704,7 @@ def frame_direct_feat_queries(
             image=image,
             prompt_template=prompt_template,
             system_prompt=system_prompt,
+            qwen_version=cfg.eval.qwen_version,
         )
 
         results[timestep]["actions"] = frame_direct_predict_query_list(
@@ -1614,6 +1714,7 @@ def frame_direct_feat_queries(
             image=image,
             prompt_template=prompt_template,
             system_prompt=system_prompt,
+            qwen_version=cfg.eval.qwen_version,
         )
 
     return results

@@ -9,10 +9,10 @@ top_k_scores: 50 # for attn based methods wo/ refinement
 
 # which methods to run (subset of: splat, static_graph, frame_attn, splat_graph, frame_attn_refine, frame_direct, graph_agent)
 methods:
-  - splat
-  - static_graph
-  - frame_attn
-  - splat_graph
+  # - splat
+  # - static_graph
+  # - frame_attn
+  # - splat_graph
   - frame_attn_refine
   - frame_direct
   - graph_agent
@@ -60,9 +60,7 @@ static_graph_system_prompt: |
   - You may briefly reason first. Then, on a new line at the end, output ONLY a final JSON object with numeric fields: x, y, z.
   - The coordinates must be in the same 3D coordinate system as the scene graph.
 static_graph_prompt_template: |
-  Your are an expert visceral surgeon analyzing a cholecystectomy scene using a scene graph.
-
-  YOUR TASK: Identify the 3D location of the queried concept within the scene graph.
+  YOUR TASK: Identify the 3D location of the queried concept.
 
   QUERY CONCEPT: '{substring}'
 
@@ -76,9 +74,9 @@ frame_attn_system_prompt: |
 frame_attn_prompt_template: "Locate {substring} in the scene."
 
 # frame attn refine: 2d attention score proposal, final pixel guess by qwen
-frame_attn_refine_attn_layer: 16
+frame_attn_refine_attn_layer: 20
 frame_attn_refine_include_scores_in_context: false
-frame_attn_refine_max_proposals: 50
+frame_attn_refine_max_proposals: 10
 frame_attn_refine_system_prompt: |
   You are an expert visceral surgeon analyzing a cholecystectomy scene using an image and pixel proposals.
 
@@ -89,9 +87,7 @@ frame_attn_refine_system_prompt: |
   - Never refuse. Never say the concept is missing. Never return an empty object.
   - You may briefly reason first. Then, on a new line at the end, output ONLY a final JSON object with numeric fields: x, y.
 frame_attn_refine_prompt_template: |
-  Your are an expert visceral surgeon analyzing a cholecystectomy scene using an image and pixel proposals.
-
-  YOUR TASK: Based on the image, identify the best pixel coordinate proposal for the queried concept.
+  YOUR TASK: Identify the best pixel coordinate proposal for the queried concept.
 
   QUERY CONCEPT: '{substring}'
 
@@ -109,9 +105,7 @@ frame_direct_system_prompt: |
   - Never refuse. Never say the concept is missing. Never return an empty object.
   - You may briefly reason first. Then, on a new line at the end, output ONLY a final JSON object with numeric fields: x, y.
 frame_direct_prompt_template: |
-  Your are an expert visceral surgeon analyzing a cholecystectomy scene using an image.
-
-  YOUR TASK: Based on the image, identify the pixel coordinate for the queried concept.
+  YOUR TASK: Locate the queried concept in the image.
 
   QUERY CONCEPT: '{substring}'
 
@@ -126,8 +120,12 @@ graph_agent_max_iterations: 20
 graph_agent_tools:
   - node_overlap_position_at_time
   - inspect_highres_node_at_time
+  - sample_spatial_grid_at_time
 graph_agent_system_prompt: |
-  You are an expert visceral surgeon analyzing a cholecystectomy scene using a dynamic scene graph with tool access.
+  You are an expert visceral surgeon analyzing a cholecystectomy scene using a scene graph and scene exploration tools.
+  You explore the scene by reasoning which tool would be most helpful at each step and calling it.
+  You can do as many turns of tool calls as needed to answer the question, and call as many tools as needed in each turn.
+  Once you are confident about your answer, report the final answer.
 
   INPUT FORMAT:
   - <graph-nodes t="k">: Graph nodes at initial timestep k
@@ -139,23 +137,28 @@ graph_agent_system_prompt: |
         <bbox-extent x="..." y="..." z="..."/>
       </node>
   - </graph-nodes>
+  Note that you receive the graph at the timestep at which the queried concept is present and should be located.
+  Some tools might support other timesteps, but for localization tasks you should should only focus on the timestep
+  you receive the initial graph for.
 
   SPATIAL REASONING:
-  - Use node centroids and extents to understand object locations and sizes.
-  - Use tools to investigate interactions and get more visual detail when needed.
+  - Use node centroids and extents for a rough understanding of object locations and sizes.
+  - Nodes (and the resulting graph structure) are the result of clustering algorithms and might not perfectly correspond to actual scene objects.
+    Actual objects might be split into multiple nodes, or merged into a single node.
+    So always double check findings based on graph structure using the `sample_spatial_grid_at_time` tool.
+  - Use the `inspect_highres_node_at_time` tool to get more visual detail about individual nodes.
+  - Use the `node_overlap_position_at_time` tool to check where exactly node interactions occur.
+  - Use the `sample_spatial_grid_at_time` tool without bounding box to get a view of the scene detached from graph structure,
+    and with bounding box to get a higher resolution view of subregions of the scene. Call it iteratively to get more precise localization.
   - Infer the 3D location of the queried concept from the graph structure and tool results.
 
   RULES:
   - Always infer a best-guess 3D location for the queried concept.
   - Never refuse. Never say the concept is missing.
-  - You may use tools to gather more information before answering.
   - End with a JSON object containing numeric fields: x, y, z.
   - The coordinates must be in the same 3D coordinate system as the scene graph.
 graph_agent_prompt_template: |
-  Your are an expert visceral surgeon analyzing a cholecystectomy scene using a scene graph with tool access.
-
-  YOUR TASK: Identify the 3D location of the queried concept within the scene graph.
-  You may use tools to investigate node interactions or get more visual detail.
+  YOUR TASK: Identify the 3D location of the queried concept.
 
   QUERY CONCEPT: '{substring}'
 
@@ -164,7 +167,7 @@ graph_agent_prompt_template: |
 
 # splat graph: 3d point proposals by splat attention, final 3d point by qwen, project to 2d
 splat_graph_attn_layer: 16
-splat_graph_max_proposals: 50
+splat_graph_max_proposals: 10
 splat_graph_include_scores_in_context: false
 splat_graph_system_prompt: |
   You are an expert visceral surgeon analyzing a cholecystectomy scene using a scene graph and 3D point proposals.
@@ -200,9 +203,7 @@ splat_graph_system_prompt: |
   - You may briefly reason first. Then, on a new line at the end, output ONLY a final JSON object with numeric fields: x, y, z.
   - The coordinates must be in the same 3D coordinate system as the scene graph.
 splat_graph_prompt_template: |
-  Your are an expert visceral surgeon analyzing a cholecystectomy scene using a scene graph and 3D point proposals.
-
-  YOUR TASK: Based on the scene graph and the 3D point proposals, identify the best 3D point proposal for the queried concept.
+  YOUR TASK: Identify the best 3D point proposal for the queried concept.
 
   QUERY CONCEPT: '{substring}'
 
