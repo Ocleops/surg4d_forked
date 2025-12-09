@@ -10,7 +10,8 @@ install-rasterization = "python -m pip install --no-build-isolation -e submodule
 install-deva = "python -m pip install -e submodules/4d-langsplat-tracking-anything-with-deva/"
 install-segment-anything = "python -m pip install git+https://github.com/facebookresearch/segment-anything.git"
 install-vipe = "python -m pip install --no-build-isolation submodules/vipe/"
-setup = { depends-on = ["install-simple-knn", "install-rasterization", "install-deva", "install-segment-anything", "install-vipe"] }
+install-depth-anything-3 = "python -m pip install submodules/depth-anything-3/"
+setup = { depends-on = ["install-simple-knn", "install-rasterization", "install-deva", "install-segment-anything", "install-vipe", "install-depth-anything-3"] }
 # run pixi run setup after pixi install to install cuda extensions
 
 [activation.env]
@@ -76,4 +77,5 @@ hydra-core = ">=1.3.2, <2"
 openexr-numpy = ">=0.0.8, <0.0.9"
 scikit-learn = ">=1.7.2, <2"
 rich = ">=14.2.0, <15"
+xformers = ">=0.0.29.post3, <0.0.30"
 

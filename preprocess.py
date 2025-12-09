@@ -7,6 +7,7 @@ import hydra
 from hydra.core.global_hydra import GlobalHydra
 import subprocess
 import shutil
+import sys
 import torch
 from vipe import make_pipeline
 from vipe.streams.base import ProcessedVideoStream
@@ -547,7 +548,8 @@ def main():
     with hydra.initialize_config_dir(
         config_dir=str(config_dir.resolve()), version_base="1.3"
     ):
-        cfg = hydra.compose("config.yaml")
+        overrides = sys.argv[1:]
+        cfg = hydra.compose("config.yaml", overrides=overrides)
     
     # Clear after composing the main config so vipe can initialize its own
     GlobalHydra.instance().clear()

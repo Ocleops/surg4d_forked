@@ -10,3 +10,6 @@
 [submodule "submodules/vipe"]
 	path = submodules/vipe
 	url = https://github.com/nv-tlabs/vipe
+[submodule "submodules/depth-anything-3"]
+	path = submodules/depth-anything-3
+	url = https://github.com/ByteDance-Seed/Depth-Anything-3
