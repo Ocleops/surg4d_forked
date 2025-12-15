@@ -141,9 +141,10 @@ def scene_reconstruction(
             joint_train=joint_train,
             no_dlang=args.no_dlang,
             init_from_stage=args.init_from_stage,
+            coarse_freeze_xyz=args.coarse_freeze_xyz,
         )
     else:
-        gaussians.training_setup(opt, stage, joint_train, args.no_dlang)
+        gaussians.training_setup(opt, stage, joint_train, args.no_dlang, coarse_freeze_xyz=args.coarse_freeze_xyz)
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -269,8 +270,18 @@ def scene_reconstruction(
 
         # Pick a random Camera
 
+        # Check if we should use a single frame for coarse training
+        use_single_frame = (
+            "coarse" in stage
+            and hasattr(args, "coarse_frame_idx")
+            and args.coarse_frame_idx is not None
+        )
+
+        if use_single_frame:
+            # Overfit on a single frame during coarse stages
+            viewpoint_cams = [temp_list[args.coarse_frame_idx]]
         # dynerf's branch
-        if opt.dataloader and not load_in_memory:
+        elif opt.dataloader and not load_in_memory:
             try:
                 viewpoint_cams = next(loader)
             except StopIteration:

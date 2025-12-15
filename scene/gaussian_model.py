@@ -108,7 +108,7 @@ class GaussianModel:
                 self.spatial_lr_scale,
             )
     
-    def restore(self, model_args, training_args, mode='train',stage='lang-fine',joint_train=False,no_dlang=False,init_from_stage='fine-lang'):
+    def restore(self, model_args, training_args, mode='train',stage='lang-fine',joint_train=False,no_dlang=False,init_from_stage='fine-lang',coarse_freeze_xyz=False):
         if len(model_args) == 15:
             (self.active_sh_degree, 
             self._xyz, 
@@ -149,7 +149,7 @@ class GaussianModel:
 
             self._deformation.load_state_dict(deform_state)
         if mode == 'train':
-            self.training_setup(training_args,stage,joint_train,no_dlang,init_from_stage=init_from_stage)
+            self.training_setup(training_args,stage,joint_train,no_dlang,init_from_stage=init_from_stage,coarse_freeze_xyz=coarse_freeze_xyz)
             self.xyz_gradient_accum = xyz_gradient_accum
             self.denom = denom
 
@@ -217,11 +217,15 @@ class GaussianModel:
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         self._deformation_table = torch.gt(torch.ones((self.get_xyz.shape[0]),device="cuda"),0)
-    def training_setup(self, training_args,stage:Literal['coarse-base','coarse-lang','fine-base','fine-lang','fine-lang-discrete'],joint_train=False,no_dlang=False,init_from_stage='fine-lang'):
+    def training_setup(self, training_args,stage:Literal['coarse-base','coarse-lang','fine-base','fine-lang','fine-lang-discrete'],joint_train=False,no_dlang=False,init_from_stage='fine-lang',coarse_freeze_xyz=False):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self._deformation_accum = torch.zeros((self.get_xyz.shape[0],3),device="cuda")
+
+        # Determine if xyz should be frozen (only in coarse stages when flag is set)
+        # This allows training static appearance/features on a fixed geometry from high-quality depth initialization
+        freeze_xyz = coarse_freeze_xyz and "coarse" in stage
 
         if training_args.include_feature and ("lang" in stage):
             if 'discrete' in stage and self._language_feature.shape[-1]==int(os.getenv("language_feature_hiddendim",3)):
@@ -235,14 +239,17 @@ class GaussianModel:
             
             print(f"training_args.language_feature_lr:{training_args.language_feature_lr}")
             if joint_train:
-                l = [
-                    {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
+                l = []
+                # Only optimize xyz if not frozen
+                if not freeze_xyz:
+                    l.append({'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"})
+                l.extend([
                     {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
                     {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
                     {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
                     {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
                     {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
-                ]
+                ])
             else:
                 l = []
             if 'fine' in stage:
@@ -255,7 +262,8 @@ class GaussianModel:
 
             l.append({'params': [self._language_feature], 'lr': training_args.language_feature_lr, "name": "language_feature"})
 
-            self._xyz.requires_grad_(joint_train)
+            # Set requires_grad for all parameters
+            self._xyz.requires_grad_(joint_train and not freeze_xyz)
             self._deformation.requires_grad_(joint_train)
             self._deformation.deformation_net.lang_deform.requires_grad_(no_dlang==0)
             if 'discrete' in stage:
@@ -270,8 +278,11 @@ class GaussianModel:
             self._language_feature.requires_grad_(True)
 
         else:
-            l = [
-                {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
+            l = []
+            # Only optimize xyz if not frozen
+            if not freeze_xyz:
+                l.append({'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"})
+            l.extend([
                 {'params': list(self._deformation.get_mlp_parameters()), 'lr': training_args.deformation_lr_init * self.spatial_lr_scale, "name": "deformation"},
                 {'params': list(self._deformation.get_grid_parameters()), 'lr': training_args.grid_lr_init * self.spatial_lr_scale, "name": "grid"},
                 {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
@@ -279,15 +290,14 @@ class GaussianModel:
                 {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
                 {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
                 {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
-
-                
-            ]
+            ])
             if self._language_feature is not None:
                 l.append(
                     {'params': [self._language_feature], 'lr': training_args.language_feature_lr, "name": "language_feature"}
                 )
-            self._xyz.requires_grad_(True)
-
+            
+            # Set requires_grad for all parameters
+            self._xyz.requires_grad_(not freeze_xyz)
             self._deformation.requires_grad_(True)
 
             self._features_dc.requires_grad_(True)

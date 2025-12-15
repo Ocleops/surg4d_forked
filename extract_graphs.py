@@ -164,6 +164,10 @@ def filter_gaussians(gaussians: GaussianModel, mask: torch.Tensor):
         mask (torch.Tensor): The mask to filter the gaussians. Shape (n_gaussians,)
     """
     for prop in dir(gaussians):
+        # Skip @property decorated attributes
+        if isinstance(getattr(type(gaussians), prop, None), property):
+            continue
+        
         attribute = getattr(gaussians, prop)
         a_type = type(attribute)
         if a_type == torch.Tensor or a_type == torch.nn.Parameter:

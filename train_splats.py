@@ -9,7 +9,6 @@ from tqdm import tqdm
 from argparse import ArgumentParser
 import time as time_module  # Rename to avoid collision with train.py's "from time import time"
 import gc
-import torch
 
 from arguments import ModelParams, PipelineParams, ModelHiddenParams, OptimizationParams
 from utils.params_utils import merge_hparams
@@ -68,6 +67,8 @@ def train_splat(clip: DictConfig, cfg: DictConfig):
     parser.add_argument("--resume_from_iter", type=int, default=-1)
     parser.add_argument("--depth_loss_weight", type=float, default=0.0)
     parser.add_argument("--opacity_loss_weight", type=float, default=0.0)
+    parser.add_argument("--coarse_freeze_xyz", action="store_true")
+    parser.add_argument("--coarse_frame_idx", type=int, default=None)
 
     # Build command line args
     cmd_args = [
@@ -92,6 +93,14 @@ def train_splat(clip: DictConfig, cfg: DictConfig):
         "--opacity_loss_weight",
         str(cfg.splat.opacity_loss_weight),
     ]
+    
+    # Add coarse_freeze_xyz flag if enabled
+    if cfg.splat.coarse_freeze_xyz:
+        cmd_args.append("--coarse_freeze_xyz")
+    
+    # Add coarse_frame_idx if specified
+    if cfg.splat.coarse_frame_idx is not None:
+        cmd_args.extend(["--coarse_frame_idx", str(cfg.splat.coarse_frame_idx)])
 
     # Add no_ds flag if dynamic_scale is enabled
     if not cfg.splat.dynamic_scale:
@@ -134,6 +143,7 @@ def train_splat(clip: DictConfig, cfg: DictConfig):
     args.coarse_lang_iterations = cfg.splat.coarse_lang_iterations
     args.fine_base_iterations = cfg.splat.fine_base_iterations
     args.fine_lang_iterations = cfg.splat.fine_lang_iterations
+    args.densify_until_iter = cfg.splat.densify_until_iter
 
     # Get timestamp
     timestamp = time_module.strftime("%Y%m%d_%H%M%S")

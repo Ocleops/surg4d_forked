@@ -11,6 +11,11 @@ coarse_lang_iterations: 10 # static rgb + language splat
 fine_base_iterations: 100 # dynamic rgb splat
 fine_lang_iterations: 100 # dynamic rgb + language splat
 
+# settings for simplifying coarse training for high quality initial depth map
+densify_until_iter: 10000 # densify gaussians if smaller than this iteration, only applied in base stages, set to 0 to disable densification
+coarse_freeze_xyz: false # if true, freezes gaussian xyz positions during coarse training stages
+coarse_frame_idx: null # if set to an integer, overfit only on that frame index during coarse stages; null trains on all frames; only implemented for preloaded dataset (dataloader=False); if this is set the batch size is ignored and set to 1
+
 # each stage starts at 0 iterations and the lang stages consider these lists
 # ATTENTION: it's crucial to save the last iteration of fine lang here!
 test_iterations: [20, 100] # when to compute val metrics (logged to tensorboard)
