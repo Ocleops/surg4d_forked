@@ -5,6 +5,7 @@ opacity_loss_weight: 0.0 # does not make sense without densification
 
 dynamic_language: true
 dynamic_scale: true
+dynamic_color: true
 
 # coarse iterations cut by 10x because we're only overfitting the feature heads on a single frame
 coarse_base_iterations: 300
@@ -16,6 +17,12 @@ fine_lang_iterations: 10000
 densify_until_iter: 0 # don't densify at all
 coarse_freeze_xyz: true # freeze gaussian means during coarse
 coarse_frame_idx: ${preprocessing.da3_pc_frame_number} # overfit coarse on the frame we initialize from
+
+# fine (dynamic) stage progressive frame sampling window
+progressive_window:
+  enabled: true
+  warmup_iterations: 8000 # lineraly expand window around specified center during warmup
+  center_frame_idx: ${splat.coarse_frame_idx}
 
 # each stage starts at 0 iterations and the lang stages consider these lists
 # ATTENTION: it's crucial to save the last iteration of fine lang here!

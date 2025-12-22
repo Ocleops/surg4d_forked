@@ -45,6 +45,42 @@ except ImportError:
     TENSORBOARD_FOUND = False
 
 
+def get_progressive_window_indices(
+    iteration: int,
+    total_frames: int,
+    center_frame_idx: int,
+    warmup_iterations: int,
+) -> set[int]:
+    """Compute frame indices for the current progressive training window.
+    
+    The window starts centered on center_frame_idx with size 1 and linearly
+    expands to cover all frames over warmup_iterations.
+    
+    Args:
+        iteration: Current training iteration (1-indexed in training loop).
+        total_frames: Total number of frames in the dataset.
+        center_frame_idx: Frame index to center the window on.
+        warmup_iterations: Number of iterations until window covers all frames.
+    
+    Returns:
+        Set of valid frame indices for the current window.
+    """
+    assert warmup_iterations > 0, "Warmup iterations must be greater than 0"
+
+    # Compute progress ratio (0 to 1)
+    progress = min(iteration / warmup_iterations, 1.0)
+    
+    # Window size grows from 1 to total_frames
+    window_size = max(1, int(1 + (total_frames - 1) * progress))
+    
+    # Compute window bounds centered on center_frame_idx
+    half_window = window_size // 2
+    start_idx = max(0, center_frame_idx - half_window)
+    end_idx = min(total_frames, start_idx + window_size)
+    
+    return set(range(start_idx, end_idx))
+
+
 def seed_worker(worker_id):
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
@@ -132,6 +168,17 @@ def scene_reconstruction(
     logger.info(
         f"stage:{stage} begin... train_iter:{train_iter}, joint_train:{joint_train}"
     )
+    
+    # Log progressive window settings for fine stages
+    if "fine" in stage and hasattr(args, "progressive_window_enabled") and args.progressive_window_enabled:
+        center_idx = getattr(args, "progressive_window_center_frame_idx", None)
+        if center_idx is None:
+            center_idx = getattr(args, "coarse_frame_idx", 0) or 0
+        logger.info(
+            f"Progressive window enabled: warmup_iters={args.progressive_window_warmup_iterations}, "
+            f"center_frame={center_idx}"
+        )
+    
     if "discrete" in stage:
         (model_params, first_iter) = torch.load(checkpoint, weights_only=False)
         gaussians.restore(
@@ -276,6 +323,13 @@ def scene_reconstruction(
             and hasattr(args, "coarse_frame_idx")
             and args.coarse_frame_idx is not None
         )
+        
+        # Check if we should use progressive window for fine stages
+        use_progressive_window = (
+            "fine" in stage
+            and hasattr(args, "progressive_window_enabled")
+            and args.progressive_window_enabled
+        )
 
         if use_single_frame:
             # Overfit on a single frame during coarse stages
@@ -298,6 +352,30 @@ def scene_reconstruction(
                 loader = iter(viewpoint_stack_loader)
 
         else:
+            # Determine which frames are available for sampling
+            if use_progressive_window:
+                # Get valid frame indices for current iteration
+                valid_indices = get_progressive_window_indices(
+                    iteration=iteration,
+                    total_frames=len(temp_list),
+                    center_frame_idx=args.progressive_window_center_frame_idx,
+                    warmup_iterations=args.progressive_window_warmup_iterations,
+                )
+                # Filter to frames in the window
+                available_frames = [temp_list[i] for i in valid_indices]
+            else:
+                available_frames = temp_list
+            
+            # Refill viewpoint_stack from available frames if empty
+            if not viewpoint_stack:
+                viewpoint_stack = available_frames.copy()
+            elif use_progressive_window:
+                # Add newly available frames immediately when window expands
+                # Use uid to match cameras (can't use object identity due to deepcopy)
+                uids_in_stack = {cam.uid for cam in viewpoint_stack}
+                new_frames = [temp_list[i] for i in valid_indices if temp_list[i].uid not in uids_in_stack]
+                viewpoint_stack.extend(new_frames)
+            
             idx = 0
             viewpoint_cams = []
 
@@ -306,7 +384,7 @@ def scene_reconstruction(
                     randint(0, len(viewpoint_stack) - 1)
                 )
                 if not viewpoint_stack:
-                    viewpoint_stack = temp_list.copy()
+                    viewpoint_stack = available_frames.copy()
                 viewpoint_cams.append(viewpoint_cam)
                 idx += 1
             if len(viewpoint_cams) == 0:

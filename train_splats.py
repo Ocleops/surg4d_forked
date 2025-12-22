@@ -69,6 +69,10 @@ def train_splat(clip: DictConfig, cfg: DictConfig):
     parser.add_argument("--opacity_loss_weight", type=float, default=0.0)
     parser.add_argument("--coarse_freeze_xyz", action="store_true")
     parser.add_argument("--coarse_frame_idx", type=int, default=None)
+    # Progressive window arguments for fine stage training
+    parser.add_argument("--progressive_window_enabled", action="store_true")
+    parser.add_argument("--progressive_window_warmup_iterations", type=int, default=8000)
+    parser.add_argument("--progressive_window_center_frame_idx", type=int, default=None)
 
     # Build command line args
     cmd_args = [
@@ -102,9 +106,16 @@ def train_splat(clip: DictConfig, cfg: DictConfig):
     if cfg.splat.coarse_frame_idx is not None:
         cmd_args.extend(["--coarse_frame_idx", str(cfg.splat.coarse_frame_idx)])
 
-    # Add no_ds flag if dynamic_scale is enabled
-    if not cfg.splat.dynamic_scale:
-        cmd_args.append("--no_ds")
+    # Add progressive window settings for fine stage training
+    if cfg.splat.progressive_window.enabled:
+        cmd_args.append("--progressive_window_enabled")
+        cmd_args.extend([
+            "--progressive_window_warmup_iterations",
+            str(cfg.splat.progressive_window.warmup_iterations),
+        ])
+        center_idx = cfg.splat.progressive_window.center_frame_idx
+        if center_idx is not None:
+            cmd_args.extend(["--progressive_window_center_frame_idx", str(center_idx)])
 
     # Parse arguments
     args = parser.parse_args(cmd_args)
@@ -144,6 +155,11 @@ def train_splat(clip: DictConfig, cfg: DictConfig):
     args.fine_base_iterations = cfg.splat.fine_base_iterations
     args.fine_lang_iterations = cfg.splat.fine_lang_iterations
     args.densify_until_iter = cfg.splat.densify_until_iter
+    
+    # Override dynamic property flags from Hydra config
+    # These are store_true flags with defaults, so we set them directly
+    args.no_dshs = not cfg.splat.dynamic_color  # dynamic SH coefficients (RGB)
+    args.no_ds = not cfg.splat.dynamic_scale    # dynamic gaussian scale
 
     # Get timestamp
     timestamp = time_module.strftime("%Y%m%d_%H%M%S")
@@ -254,10 +270,6 @@ def render_splat(clip: DictConfig, cfg: DictConfig, model_path: str, stage: str)
             stage,
         ]
 
-        # Add no_ds flag if dynamic_scale is disabled (same as training)
-        if not cfg.splat.dynamic_scale:
-            cmd_args.append("--no_ds")
-
         # Parse arguments
         args = parser.parse_args(cmd_args)
 
@@ -282,6 +294,10 @@ def render_splat(clip: DictConfig, cfg: DictConfig, model_path: str, stage: str)
                         "Neither mmcv.Config nor mmengine.config.Config is available"
                     )
             args = merge_hparams(args, config)
+
+        # Override dynamic property flags from Hydra config (same as training)
+        args.no_dshs = not cfg.splat.dynamic_color
+        args.no_ds = not cfg.splat.dynamic_scale
 
         # Call render function
         render_sets(

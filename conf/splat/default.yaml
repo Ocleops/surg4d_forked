@@ -5,6 +5,7 @@ opacity_loss_weight: 1.0
 
 dynamic_language: true
 dynamic_scale: true
+dynamic_color: true  # dynamic SH coefficients (RGB appearance)
 
 coarse_base_iterations: 3000 # static rgb splat
 coarse_lang_iterations: 1000 # static rgb + language splat
@@ -15,6 +16,11 @@ fine_lang_iterations: 10000 # dynamic rgb + language splat
 densify_until_iter: 10000 # densify gaussians if smaller than this iteration, only applied in base stages, set to 0 to disable densification
 coarse_freeze_xyz: false # if true, freezes gaussian xyz positions during coarse training stages
 coarse_frame_idx: null # if set to an integer, overfit only on that frame index during coarse stages; null trains on all frames; only implemented for preloaded dataset (dataloader=False); if this is set the batch size is ignored and set to 1
+
+progressive_window:
+  enabled: false
+  warmup_iterations: 8000
+  center_frame_idx: null
 
 # each stage starts at 0 iterations and the lang stages consider these lists
 # ATTENTION: it's crucial to save the last iteration of fine lang here!
