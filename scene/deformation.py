@@ -67,6 +67,23 @@ class Deformation(nn.Module):
         
         self.lang_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.args.timebase_pe*2+1+language_feature_hiddendim,self.W),nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, language_feature_hiddendim))
         self.discrete_coff_generator = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, int(os.getenv("centers_num",3))))
+        
+        # ReZero scaling parameters - initialize to 0 so deltas start at 0
+        # This ensures the network starts as identity and gradually learns deformations
+        if getattr(self.args, 'rezero_init', False):
+            self.pos_alpha = nn.Parameter(torch.zeros(1))
+            self.scales_alpha = nn.Parameter(torch.zeros(1))
+            self.rotations_alpha = nn.Parameter(torch.zeros(1))
+            self.opacity_alpha = nn.Parameter(torch.zeros(1))
+            self.shs_alpha = nn.Parameter(torch.zeros(1))
+            self.lang_alpha = nn.Parameter(torch.zeros(1))
+        else:
+            self.register_buffer('pos_alpha', torch.ones(1))
+            self.register_buffer('scales_alpha', torch.ones(1))
+            self.register_buffer('rotations_alpha', torch.ones(1))
+            self.register_buffer('opacity_alpha', torch.ones(1))
+            self.register_buffer('shs_alpha', torch.ones(1))
+            self.register_buffer('lang_alpha', torch.ones(1))
     def query_time(self, rays_pts_emb, scales_emb, rotations_emb, time_feature, time_emb):
 
         if self.no_grid:
@@ -114,14 +131,14 @@ class Deformation(nn.Module):
         if self.args.no_dx:
             pts = rays_pts_emb[:,:3]
         else:
-            dx = self.pos_deform(hidden)
+            dx = self.pos_alpha * self.pos_deform(hidden)
             pts = torch.zeros_like(rays_pts_emb[:,:3])
             pts = rays_pts_emb[:,:3]*mask + dx
         if self.args.no_ds :
             
             scales = scales_emb[:,:3]
         else:
-            ds = self.scales_deform(hidden)
+            ds = self.scales_alpha * self.scales_deform(hidden)
 
             scales = torch.zeros_like(scales_emb[:,:3])
             scales = scales_emb[:,:3]*mask + ds
@@ -129,7 +146,7 @@ class Deformation(nn.Module):
         if self.args.no_dr :
             rotations = rotations_emb[:,:4]
         else:
-            dr = self.rotations_deform(hidden)
+            dr = self.rotations_alpha * self.rotations_deform(hidden)
 
             rotations = torch.zeros_like(rotations_emb[:,:4])
             if self.args.apply_rotation:
@@ -140,14 +157,14 @@ class Deformation(nn.Module):
         if self.args.no_do :
             opacity = opacity_emb[:,:1] 
         else:
-            do = self.opacity_deform(hidden) 
+            do = self.opacity_alpha * self.opacity_deform(hidden) 
           
             opacity = torch.zeros_like(opacity_emb[:,:1])
             opacity = opacity_emb[:,:1]*mask + do
         if self.args.no_dshs:
             shs = shs_emb
         else:
-            dshs = self.shs_deform(hidden).reshape([shs_emb.shape[0],16,3])
+            dshs = self.shs_alpha * self.shs_deform(hidden).reshape([shs_emb.shape[0],16,3])
 
             shs = torch.zeros_like(shs_emb)
             # breakpoint()
@@ -170,9 +187,9 @@ class Deformation(nn.Module):
                 lang_feature = lang_emb[:,:language_dim]
             else:
                 if os.getenv("use_tribute_dlang","f") == "t":
-                    dlang = self.lang_deform(hidden)
+                    dlang = self.lang_alpha * self.lang_deform(hidden)
                 else:
-                    dlang = self.lang_deform(torch.concat((lang_emb,time_pos_emb),dim=1))
+                    dlang = self.lang_alpha * self.lang_deform(torch.concat((lang_emb,time_pos_emb),dim=1))
                 if os.getenv("no_resnet",'f') == 't':
                     lang_feature = dlang
                 else:

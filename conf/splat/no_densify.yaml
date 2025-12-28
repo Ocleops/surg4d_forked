@@ -4,8 +4,8 @@ depth_loss_weight: 1.0
 opacity_loss_weight: 0.0 # does not make sense without densification
 
 dynamic_language: true
-dynamic_scale: true
-dynamic_color: true
+dynamic_scale: false
+dynamic_color: false
 
 # coarse iterations cut by 10x because we're only overfitting the feature heads on a single frame
 coarse_base_iterations: 300
@@ -39,5 +39,8 @@ render_outputs:
 # environment variables
 language_feature_hiddendim: 6
 use_discrete_lang_f: f
+
+# model initialization
+rezero_init: true  # Initialize deformation deltas to 0 using ReZero scaling
 
 latent_cat_feat_subdir: ${autoencoder.latent_cat_feat_subdir}

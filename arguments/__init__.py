@@ -112,6 +112,7 @@ class ModelHiddenParams(ParamGroup):
         self.grid_pe=0
         self.static_mlp=False
         self.apply_rotation=False
+        self.rezero_init=False  # Initialize deformation deltas to 0 using ReZero scaling
 
         
         super().__init__(parser, "ModelHiddenParams")

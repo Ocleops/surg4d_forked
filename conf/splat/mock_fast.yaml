@@ -38,4 +38,7 @@ render_outputs:
 language_feature_hiddendim: 6
 use_discrete_lang_f: f
 
+# model initialization
+rezero_init: false  # Initialize deformation deltas to 0 using ReZero scaling
+
 latent_cat_feat_subdir: ${autoencoder.latent_cat_feat_subdir}

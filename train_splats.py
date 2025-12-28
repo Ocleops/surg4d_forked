@@ -160,6 +160,8 @@ def train_splat(clip: DictConfig, cfg: DictConfig):
     # These are store_true flags with defaults, so we set them directly
     args.no_dshs = not cfg.splat.dynamic_color  # dynamic SH coefficients (RGB)
     args.no_ds = not cfg.splat.dynamic_scale    # dynamic gaussian scale
+    
+    args.rezero_init = cfg.splat.rezero_init
 
     # Get timestamp
     timestamp = time_module.strftime("%Y%m%d_%H%M%S")
@@ -298,6 +300,7 @@ def render_splat(clip: DictConfig, cfg: DictConfig, model_path: str, stage: str)
         # Override dynamic property flags from Hydra config (same as training)
         args.no_dshs = not cfg.splat.dynamic_color
         args.no_ds = not cfg.splat.dynamic_scale
+        args.rezero_init = cfg.splat.rezero_init
 
         # Call render function
         render_sets(
