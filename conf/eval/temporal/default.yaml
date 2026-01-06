@@ -30,7 +30,7 @@ multiframe_action_onset_system_prompt: |
   Report the point in time in seconds.
 
 multiframe_action_onset_prompt_template: |
-  Identify the point in time when '{substring}' first starts.
+  Identify the point in time when '{question}' first starts.
 
   The video has {num_frames} timesteps (t=0 to t={last_frame}).
 
@@ -50,7 +50,7 @@ multiframe_action_duration_system_prompt: |
   Report the time ranges in seconds.
 
 multiframe_action_duration_prompt_template: |
-  Identify the time range(s) during which '{substring}' occurs.
+  Identify the time range(s) during which '{question}' occurs.
 
   The video has {num_frames} timesteps (t=0 to t={last_frame}).
 
@@ -204,26 +204,26 @@ multiframe_action_duration_prompt_template: |
 #   Example (format only): {{"ranges": [[17, 23], [45, 58]]}}
 
 
-# # ============================================================================
-# # GRAPH_AGENT (agentic exploration with tools)
-# # ============================================================================
-# graph_agent_autoencoder_checkpoint_subdir: ${autoencoder.checkpoint_subdir}
-# graph_agent_autoencoder_full_dim: ${autoencoder.full_dim}
-# graph_agent_autoencoder_latent_dim: ${autoencoder.latent_dim}
-# graph_agent_max_iterations: 30
-# graph_agent_tools:
-#   - name: node_distances_through_time
-#     max_calls: null  # unlimited
-#   - name: node_overlap_scores_through_time
-#     max_calls: null  # unlimited
-#   - name: inspect_node_through_time
-#     max_calls: 5
-#   - name: inspect_scene_at_time
-#     max_calls: 3
-#   - name: inspect_highres_node_at_time
-#     max_calls: 5
-#   - name: voxelize_scene
-#     max_calls: 5
+# ============================================================================
+# GRAPH_AGENT (agentic exploration with tools)
+# ============================================================================
+graph_agent_autoencoder_checkpoint_subdir: ${autoencoder.checkpoint_subdir}
+graph_agent_autoencoder_full_dim: ${autoencoder.full_dim}
+graph_agent_autoencoder_latent_dim: ${autoencoder.latent_dim}
+graph_agent_max_iterations: 30
+graph_agent_tools:
+  - name: node_distances_through_time
+    max_calls: null  # unlimited
+  - name: node_overlap_scores_through_time
+    max_calls: null  # unlimited
+  - name: inspect_node_through_time
+    max_calls: 5
+  - name: inspect_scene_at_time
+    max_calls: 3
+  - name: inspect_highres_node_at_time
+    max_calls: 5
+  - name: voxelize_scene
+    max_calls: 5
 
 graph_agent_action_onset_system_prompt: |
   # Task
@@ -245,7 +245,7 @@ graph_agent_action_onset_system_prompt: |
   Your final answer should always contain exactly one point in time as a JSON object. Never refuse!
   Report the point in time in seconds.
 graph_agent_action_onset_prompt_template: |
-  Identify the point in time when '{substring}' first starts.
+  Identify the point in time when '{question}' first starts.
 
   The graph has {num_frames} timesteps (t=0 to t={last_frame}).
 
@@ -271,7 +271,7 @@ graph_agent_action_duration_system_prompt: |
   Your final answer should always contain a list of time ranges as a JSON object. Never refuse!
   Report the time ranges in seconds.
 graph_agent_action_duration_prompt_template: |
-  Identify the time range(s) during which '{substring}' occurs.
+  Identify the time range(s) during which '{question}' occurs.
 
   The graph has {num_frames} timesteps (t=0 to t={last_frame}).
 
