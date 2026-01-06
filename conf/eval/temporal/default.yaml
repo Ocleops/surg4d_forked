@@ -84,7 +84,7 @@ multiframe_graph_action_onset_system_prompt: |
   INPUT FORMAT:
   - <scene-graph>
     - <spatial-graphs> across timesteps t=0..T-1:
-      - <spatial-graph t="k">
+      - <spatial-graph timestep="k" time="<X.X seconds>">
         - For each node n:
           <node id="n">
             <descriptor> [image descriptor] </descriptor>
@@ -126,7 +126,7 @@ multiframe_graph_action_duration_system_prompt: |
   INPUT FORMAT:
   - <scene-graph>
     - <spatial-graphs> across timesteps t=0..T-1:
-      - <spatial-graph t="k">
+      - <spatial-graph timestep="k" time="<X.X seconds>">
         - For each node n:
           <node id="n">
             <descriptor> [image descriptor] </descriptor>
@@ -257,8 +257,8 @@ graph_agent_action_onset_system_prompt: |
 
   INPUT FORMAT:
   - <scene-graph>
-    - <spatial-graphs> across timesteps t=0..T-1:
-      - <spatial-graph t="k">
+    - <spatial-graphs> across time:
+      - <spatial-graph timestep="k" time="<X.X seconds>">
         - For each node n:
           <node id="n">
             <lowres-visual-descriptor> [image descriptor] </lowres-visual-descriptor>
@@ -276,40 +276,41 @@ graph_agent_action_onset_system_prompt: |
   You have access to tools for exploring temporal properties:
   - node_distances_through_time: Track how distances between nodes change over time
   - node_overlap_scores_through_time: Track how spatial overlaps change over time
-  - inspect_node_through_time: See a node's visual and geometric properties through all timesteps
-  - inspect_scene_at_time: Get complete scene state at a specific timestep
-  - inspect_highres_node_at_time: Get detailed visual features for a node at a specific timestep
-  - voxelize_scene: Voxelize the scene at a specific timestep to inspect spatially, detached from graph clustering
+  - inspect_node_through_time: See a node's visual and geometric properties through all time
+  - inspect_scene_at_time: Get complete scene state at a specific time (use timestep parameter)
+  - inspect_highres_node_at_time: Get detailed visual features for a node at a specific time (use timestep parameter)
+  - voxelize_scene: Voxelize the scene at a specific time to inspect spatially (use timestep parameter), detached from graph clustering
 
   STRATEGY:
   The graph is created by clustering and is imperfect. ALWAYS follow these steps:
-  1. Use graph-based tools (distances/overlaps through time, inspect nodes) to predict an onset timestep.
-  2. Use voxelize_scene to predict an onset timestep.
+  1. Use graph-based tools (distances/overlaps through time, inspect nodes) to predict an onset time.
+  2. Use voxelize_scene to predict an onset time.
   3. If they disagree, trust the voxelize_scene result and report it.
 
   RULES:
-  - Always infer a best-guess timestep for when the action begins using surgical knowledge and tool-assisted exploration.
+  - Always infer a best-guess time (in seconds) for when the action begins using surgical knowledge and tool-assisted exploration.
   - Never refuse. Never say the action is missing.
   - Report your answer as soon as you're confident.
-  - Output ONLY a final JSON object with numeric field: timestep.
+  - Answer with the time in seconds (float), not with timesteps!
+  - Output ONLY a final JSON object with numeric field: second.
 
 graph_agent_action_onset_prompt_template: |
-  YOUR TASK: Identify the timestep when the specified action first starts.
+  YOUR TASK: Identify the time (in seconds) when the specified action first starts.
 
-  The graph has {num_frames} timesteps (t=0 to t={last_frame}).
+  The video has {num_frames} timesteps (t=0 to t={last_frame}).
 
   QUESTION: {question}
 
-  Output format: respond ONLY with a valid JSON object having numeric field timestep.
-  Example (format only): {{"timestep": 42}}
+  Output format: respond ONLY with a valid JSON object having numeric field second.
+  Example (format only): {{"second": 1.68}}
 
 graph_agent_action_duration_system_prompt: |
   You are an expert visceral surgeon analyzing a cholecystectomy scene using scene graphs and exploration tools for temporal reasoning.
 
   INPUT FORMAT:
   - <scene-graph>
-    - <spatial-graphs> across timesteps t=0..T-1:
-      - <spatial-graph t="k">
+    - <spatial-graphs> across time:
+      - <spatial-graph timestep="k" time="<X.X seconds>">
         - For each node n:
           <node id="n">
             <lowres-visual-descriptor> [image descriptor] </lowres-visual-descriptor>
@@ -327,10 +328,10 @@ graph_agent_action_duration_system_prompt: |
   You have access to tools for exploring temporal properties:
   - node_distances_through_time: Track how distances between nodes change over time
   - node_overlap_scores_through_time: Track how spatial overlaps change over time
-  - inspect_node_through_time: See a node's visual and geometric properties through all timesteps
-  - inspect_scene_at_time: Get complete scene state at a specific timestep
-  - inspect_highres_node_at_time: Get detailed visual features for a node at a specific timestep
-  - voxelize_scene: Voxelize the scene at a specific timestep to inspect spatially, detached from graph clustering
+  - inspect_node_through_time: See a node's visual and geometric properties through all time
+  - inspect_scene_at_time: Get complete scene state at a specific time (use timestep parameter)
+  - inspect_highres_node_at_time: Get detailed visual features for a node at a specific time (use timestep parameter)
+  - voxelize_scene: Voxelize the scene at a specific time to inspect spatially (use timestep parameter), detached from graph clustering
 
   STRATEGY:
   The graph is created by clustering and is imperfect. ALWAYS follow these steps:
@@ -339,19 +340,20 @@ graph_agent_action_duration_system_prompt: |
   3. If they disagree, trust the voxelize_scene result and report it.
 
   RULES:
-  - Always infer best-guess timestep ranges for when the action occurs using surgical knowledge and tool-assisted exploration.
+  - Always infer best-guess time ranges (in seconds) for when the action occurs using surgical knowledge and tool-assisted exploration.
   - Never refuse. Never say the action is missing.
   - Report your answer as soon as you're confident.
-  - Ranges are INCLUSIVE for both start and end timesteps (e.g., action at timesteps 4, 5, 6 is [4, 6]).
-  - The ranges field MUST be a list of [start, end] pairs, even for a single range.
-  - Output ONLY a final JSON object with field: ranges.
+  - Answer with time ranges in seconds (floats), not with timesteps!
+  - Ranges are INCLUSIVE for both start and end times (e.g., action from 0.68s to 1.36s is [0.68, 1.36]).
+  - The second_ranges field MUST be a list of [start, end] pairs, even for a single range.
+  - Output ONLY a final JSON object with field: second_ranges.
 
 graph_agent_action_duration_prompt_template: |
-  YOUR TASK: Identify the timestep range(s) during which the specified action occurs.
+  YOUR TASK: Identify the time range(s) in seconds during which the specified action occurs.
 
   The graph has {num_frames} timesteps (t=0 to t={last_frame}).
 
   QUESTION: {question}
 
-  Output format: respond ONLY with a valid JSON object with field "ranges" containing a LIST of [start, end] pairs.
-  Example (format only): {{"ranges": [[17, 23], [45, 58]]}}
+  Output format: respond ONLY with a valid JSON object with field "second_ranges" containing a LIST of [start, end] pairs in seconds.
+  Example (format only): {{"second_ranges": [[0.68, 1.36], [1.80, 2.32]]}}

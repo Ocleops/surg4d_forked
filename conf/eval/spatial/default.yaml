@@ -32,7 +32,7 @@ static_graph_system_prompt: |
   INPUT FORMAT:
   - <scene-graph>
     - <spatial-graphs> across timesteps t=0..T-1:
-      - <spatial-graph t="k">
+      - <spatial-graph timestep="k">
         - For each node n:
           <node id="n">
             <descriptor> [image descriptor] </descriptor>
@@ -190,7 +190,7 @@ splat_graph_system_prompt: |
   INPUT FORMAT:
   - <scene-graph>
     - <spatial-graphs> across timesteps t=0..T-1:
-      - <spatial-graph t="k">
+      - <spatial-graph timestep="k">
         - For each node n:
           <node id="n">
             <descriptor> [image descriptor] </descriptor>

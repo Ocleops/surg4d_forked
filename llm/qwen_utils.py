@@ -45,6 +45,20 @@ QWEN_CONSTANTS = {
 QWEN_VERSIONS = tuple(QWEN_CONSTANTS.keys())
 
 
+def timestep_to_seconds_str(timestep: int, fps: float) -> str:
+    """Convert timestep index to Qwen3 temporal format.
+    
+    Args:
+        timestep: Integer timestep index
+        fps: Frames per second
+        
+    Returns:
+        Formatted string like "<3.0 seconds>"
+    """
+    seconds = timestep / fps
+    return f"time=\"<{seconds:.1f} seconds>\""
+
+
 def qwen3_deepstack_to_cat(
     main_feats: torch.Tensor,
     deepstack_feats: List[torch.Tensor],
@@ -937,7 +951,6 @@ def prompt_with_graph_at_timestep(
     processor: Union[Qwen2_5_VLProcessor, Qwen3VLProcessor],
     qwen_version: str = "qwen25",
     system_prompt: str = None,
-    tools: Dict[str, Tuple[Callable, Dict[str, Any]]] = {},
 ):
     """
     node_feats: np.lib.npyio.NpzFile - npz file containing node features for each timestep
@@ -1035,25 +1048,14 @@ def prompt_with_graph_at_timestep(
         },
     ]
 
-    if tools:
-        return generate_with_vision_features_agentic(
-            messages=messages,
-            vision_features=[torch.Tensor(f) for f in node_feats],
-            model=model,
-            processor=processor,
-            tools=tools,
-            qwen_version=qwen_version,
-            max_tokens=5012,
-        )
-    else:
-        return generate_with_vision_features(
-            messages=messages,
-            vision_features=[torch.Tensor(f) for f in node_feats],
-            model=model,
-            processor=processor,
-            qwen_version=qwen_version,
-            max_tokens=5012,
-        )
+    return generate_with_vision_features(
+        messages=messages,
+        vision_features=[torch.Tensor(f) for f in node_feats],
+        model=model,
+        processor=processor,
+        qwen_version=qwen_version,
+        max_tokens=5012,
+    )
 
 
 def prompt_graph_agent(
@@ -1070,6 +1072,7 @@ def prompt_graph_agent(
     system_prompt: str = None,
     max_iterations: int = 20,
     tool_call_limits: Optional[Dict[str, Optional[int]]] = None,
+    fps: float = None,
 ):
     """
     node_feats: np.lib.npyio.NpzFile - npz file containing node features for each timestep
@@ -1082,6 +1085,7 @@ def prompt_graph_agent(
     processor: Qwen2_5_VLProcessor - processor to use
     system_prompt: str - system prompt to use
     tools: Dict[str, Tuple[Callable, Dict[str, Any]]] - tools to use
+    fps: Optional frames per second. If provided, uses seconds format instead of timestep.
     """
     assert qwen_version == "qwen3", "qwen3 is required for graph agentic prompting"
     assert tools is not None and len(tools) > 0, (
@@ -1099,11 +1103,17 @@ def prompt_graph_agent(
     extents = node_extents[initial_timestep_idx]
     centers = node_centers[initial_timestep_idx]
 
+    # Format time reference
+    if fps is not None:
+        time_attr = f'timestep="{initial_timestep_idx}" {timestep_to_seconds_str(initial_timestep_idx, fps)}'
+    else:
+        time_attr = f'timestep="{initial_timestep_idx}"'
+
     graph_content = []
     graph_content.append(
         {
             "type": "text",
-            "text": f'<graph-nodes t="{initial_timestep_idx}">\n',
+            "text": f'<graph-nodes {time_attr}>\n',
         }
     )
     for n in range(centroids.shape[0]):
@@ -1150,12 +1160,29 @@ def prompt_graph_agent(
         }
     )
 
+    # Add tool call limits information to the prompt
+    tool_limits_content = []
+    if tool_call_limits is not None:
+        tool_limits_content.append(
+            {"type": "text", "text": "<tool-call-limits>\n"}
+        )
+        for tool_name in tools.keys():
+            limit = tool_call_limits.get(tool_name, None)
+            limit_str = "infinite" if limit is None else str(limit)
+            tool_limits_content.append(
+                {"type": "text", "text": f'<tool name="{tool_name}" remaining_calls="{limit_str}" />\n'}
+            )
+        tool_limits_content.append(
+            {"type": "text", "text": "</tool-call-limits>\n"}
+        )
+
     messages = [
         {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
         {
             "role": "user",
             "content": [
                 *graph_content,
+                *tool_limits_content,
                 {"type": "text", "text": "<user-prompt>"},
                 {"type": "text", "text": question},
                 {"type": "text", "text": "</user-prompt>\n"},
@@ -1188,7 +1215,7 @@ def prompt_with_static_graph(
     processor: Union[Qwen2_5_VLProcessor, Qwen3VLProcessor],
     qwen_version: str = "qwen25",
     system_prompt: str = None,
-    tools: Dict[str, Tuple[Callable, Dict[str, Any]]] = {},
+    fps: float = None,
 ):
     """
     node_feats: np.lib.npyio.NpzFile - npz file containing node features for each timestep
@@ -1200,6 +1227,7 @@ def prompt_with_static_graph(
     model: Qwen2_5_VLForConditionalGeneration - model to use
     processor: Qwen2_5_VLProcessor - processor to use
     system_prompt: str - system prompt to use
+    fps: Optional frames per second. If provided, uses seconds format instead of timestep.
     """
     assert (
         len(adjacency_matrices)
@@ -1234,10 +1262,17 @@ def prompt_with_static_graph(
     graph_content = []
     for t in range(len(adjacency_matrices)):
         A = adjacency_matrices[t]
+        
+        # Format time reference
+        if fps is not None:
+            time_attr = f'timestep="{t}" {timestep_to_seconds_str(t, fps)}'
+        else:
+            time_attr = f'timestep="{t}"'
+        
         graph_content.append(
             {
                 "type": "text",
-                "text": f'<spatial-graph t="{t}">\n',
+                "text": f'<spatial-graph {time_attr}>\n',
             }
         )
         for n in range(A.shape[0]):
@@ -1297,25 +1332,14 @@ def prompt_with_static_graph(
         },
     ]
 
-    if tools:
-        return generate_with_vision_features_agentic(
-            messages=messages,
-            vision_features=[torch.Tensor(f) for f in node_feats],
-            model=model,
-            processor=processor,
-            tools=tools,
-            qwen_version=qwen_version,
-            max_tokens=5012,
-        )
-    else:
-        return generate_with_vision_features(
-            messages=messages,
-            vision_features=[torch.Tensor(f) for f in node_feats],
-            model=model,
-            processor=processor,
-            qwen_version=qwen_version,
-            max_tokens=5012,
-        )
+    return generate_with_vision_features(
+        messages=messages,
+        vision_features=[torch.Tensor(f) for f in node_feats],
+        model=model,
+        processor=processor,
+        qwen_version=qwen_version,
+        max_tokens=5012,
+    )
 
 
 def prompt_with_dynamic_graph(
@@ -1329,9 +1353,7 @@ def prompt_with_dynamic_graph(
     processor: Union[Qwen2_5_VLProcessor, Qwen3VLProcessor],
     qwen_version: str = "qwen25",
     system_prompt: str = None,
-    tools: Dict[str, Tuple[Callable, Dict[str, Any]]] = {},
-    max_iterations: int = 10,
-    tool_call_limits: Optional[Dict[str, Optional[int]]] = None,
+    fps: float = None,
 ):
     assert (
         len(adjacency_matrices)
@@ -1347,10 +1369,17 @@ def prompt_with_dynamic_graph(
     graph_content = []
     for t in range(len(adjacency_matrices)):
         A = adjacency_matrices[t]
+        
+        # Format time reference
+        if fps is not None:
+            time_attr = f'timestep="{t}" {timestep_to_seconds_str(t, fps)}'
+        else:
+            time_attr = f'timestep="{t}"'
+        
         graph_content.append(
             {
                 "type": "text",
-                "text": f'<spatial-graph t="{t}">\n',
+                "text": f'<spatial-graph {time_attr}>\n',
             }
         )
         for n in range(A.shape[0]):
@@ -1408,6 +1437,7 @@ def prompt_with_dynamic_graph(
                 "text": "</spatial-graph>\n",
             }
         )
+    
     # TODO: adapt question and system_prompt
     messages = [
         {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
@@ -1431,27 +1461,14 @@ def prompt_with_dynamic_graph(
         for t in range(node_feats[n].shape[0]):
             feature_list.append(torch.Tensor(node_feats[n][t]))
 
-    if tools:
-        return generate_with_vision_features_agentic(
-            messages=messages,
-            vision_features=feature_list,
-            model=model,
-            processor=processor,
-            tools=tools,
-            qwen_version=qwen_version,
-            max_tokens=5012,
-            max_iterations=max_iterations,
-            tool_call_limits=tool_call_limits,
-        )
-    else:
-        return generate_with_vision_features(
-            messages=messages,
-            vision_features=feature_list,
-            model=model,
-            processor=processor,
-            qwen_version=qwen_version,
-            max_tokens=5012,
-        )
+    return generate_with_vision_features(
+        messages=messages,
+        vision_features=feature_list,
+        model=model,
+        processor=processor,
+        qwen_version=qwen_version,
+        max_tokens=5012,
+    )
 
 
 def prompt_with_descriptors_at_timestep(
@@ -1462,7 +1479,6 @@ def prompt_with_descriptors_at_timestep(
     processor: Union[Qwen2_5_VLProcessor, Qwen3VLProcessor],
     qwen_version: str = "qwen25",
     system_prompt: str = None,
-    tools: Dict[str, Tuple[Callable, Dict[str, Any]]] = {},
 ):
     """
     Ablation of prompt_with_graph_at_timestep: only pass cluster descriptor images
@@ -1504,25 +1520,14 @@ def prompt_with_descriptors_at_timestep(
         },
     ]
 
-    if tools:
-        return generate_with_vision_features_agentic(
-            messages=messages,
-            vision_features=[torch.Tensor(f) for f in node_feats_t],
-            model=model,
-            processor=processor,
-            tools=tools,
-            qwen_version=qwen_version,
-            max_tokens=5012,
-        )
-    else:
-        return generate_with_vision_features(
-            messages=messages,
-            vision_features=[torch.Tensor(f) for f in node_feats_t],
-            model=model,
-            processor=processor,
-            qwen_version=qwen_version,
-            max_tokens=5012,
-        )
+    return generate_with_vision_features(
+        messages=messages,
+        vision_features=[torch.Tensor(f) for f in node_feats_t],
+        model=model,
+        processor=processor,
+        qwen_version=qwen_version,
+        max_tokens=5012,
+    )
 
 
 def prompt_with_dynamic_descriptors(
@@ -1536,7 +1541,7 @@ def prompt_with_dynamic_descriptors(
     processor: Union[Qwen2_5_VLProcessor, Qwen3VLProcessor],
     qwen_version: str = "qwen25",
     system_prompt: str = None,
-    tools: Dict[str, Tuple[Callable, Dict[str, Any]]] = {},
+    fps: float = None,
 ):
     """
     Ablation of prompt_with_dynamic_graph: pass only descriptor images separated by
@@ -1556,7 +1561,13 @@ def prompt_with_dynamic_descriptors(
     # Build descriptor-only content with timestep separation
     content = []
     for t in range(len(adjacency_matrices)):
-        content.append({"type": "text", "text": f'<descriptors t="{t}">\n'})
+        # Format time reference
+        if fps is not None:
+            time_attr = f'timestep="{t}" {timestep_to_seconds_str(t, fps)}'
+        else:
+            time_attr = f'timestep="{t}"'
+        
+        content.append({"type": "text", "text": f'<descriptors {time_attr}>\n'})
         # number of clusters = len(node_feats_list)
         for n in range(len(node_feats_list)):
             content.extend(
@@ -1589,25 +1600,14 @@ def prompt_with_dynamic_descriptors(
         for t in range(node_feats_list[n].shape[0]):
             feature_list.append(torch.Tensor(node_feats_list[n][t]))
 
-    if tools:
-        return generate_with_vision_features_agentic(
-            messages=messages,
-            vision_features=feature_list,
-            model=model,
-            processor=processor,
-            tools=tools,
-            qwen_version=qwen_version,
-            max_tokens=5012,
-        )
-    else:
-        return generate_with_vision_features(
-            messages=messages,
-            vision_features=feature_list,
-            model=model,
-            processor=processor,
-            qwen_version=qwen_version,
-            max_tokens=5012,
-        )
+    return generate_with_vision_features(
+        messages=messages,
+        vision_features=feature_list,
+        model=model,
+        processor=processor,
+        qwen_version=qwen_version,
+        max_tokens=5012,
+    )
 
 
 def prompt_with_video_frames(

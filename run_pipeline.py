@@ -6,6 +6,7 @@ import torch
 import gc
 import random
 import numpy as np
+from tqdm import tqdm
 
 from benchmark.spatial import get_patched_qwen_for_spatial_grounding
 from preprocess import process_clip
@@ -49,7 +50,7 @@ def main():
         OmegaConf.save(cfg, config_dump)
 
     if cfg.whole_pipeline_clips_sequentially:
-        for clip in cfg.clips:
+        for clip in tqdm(cfg.clips, desc="Full Pipeline", unit="clip"):
             if not cfg.skip_preprocessing:
                 process_clip(clip, cfg)
 
@@ -85,30 +86,36 @@ def main():
                 evaluate_triplets(clip, cfg, model=model, processor=processor)
                 evaluate_temporal(clip, cfg, model=model, processor=processor)
 
-                model_spatial, processor_spatial = (
-                    get_patched_qwen_for_spatial_grounding(
-                        qwen_version=cfg.eval.qwen_version,
-                        use_bnb_4bit=cfg.feature_extraction.bnb_4bit,
-                        use_bnb_8bit=cfg.feature_extraction.bnb_8bit,
+                # Only load spatial attention model if spatial evaluation is enabled
+                model_spatial = None
+                processor_spatial = None
+                if cfg.eval is not None and cfg.eval.get("spatial") is not None:
+                    model_spatial, processor_spatial = (
+                        get_patched_qwen_for_spatial_grounding(
+                            qwen_version=cfg.eval.qwen_version,
+                            use_bnb_4bit=cfg.feature_extraction.bnb_4bit,
+                            use_bnb_8bit=cfg.feature_extraction.bnb_8bit,
+                        )
                     )
-                )
-                evaluate_spatial(
-                    clip=clip,
-                    cfg=cfg,
-                    model_spatial=model_spatial,
-                    processor_spatial=processor_spatial,
-                    model=model,
-                    processor=processor,
-                )
+                    evaluate_spatial(
+                        clip=clip,
+                        cfg=cfg,
+                        model_spatial=model_spatial,
+                        processor_spatial=processor_spatial,
+                        model=model,
+                        processor=processor,
+                    )
+                
                 del model
                 del processor
-                del model_spatial
-                del processor_spatial
+                if model_spatial is not None:
+                    del model_spatial
+                    del processor_spatial
                 gc.collect()
                 torch.cuda.empty_cache()
     else:
         if not cfg.skip_preprocessing:
-            for clip in cfg.clips:
+            for clip in tqdm(cfg.clips, desc="Preprocessing", unit="clip"):
                 process_clip(clip, cfg)
 
         if not cfg.skip_feature_extraction:
@@ -117,7 +124,7 @@ def main():
                 use_bnb_4bit=cfg.feature_extraction.bnb_4bit,
                 use_bnb_8bit=cfg.feature_extraction.bnb_8bit,
             )
-            for clip in cfg.clips:
+            for clip in tqdm(cfg.clips, desc="Feature Extraction", unit="clip"):
                 extract_qwen_features(clip, cfg, model, processor)
             del model
             del processor
@@ -125,15 +132,15 @@ def main():
             torch.cuda.empty_cache()
 
         if not cfg.skip_autoencoder:
-            for clip in cfg.clips:
+            for clip in tqdm(cfg.clips, desc="Autoencoder Training", unit="clip"):
                 train_ae(clip, cfg)
 
         if not cfg.skip_splat:
-            for clip in cfg.clips:
+            for clip in tqdm(cfg.clips, desc="Splat Training", unit="clip"):
                 train_splat(clip, cfg)
 
         if not cfg.skip_graph_extraction:
-            for clip in cfg.clips:
+            for clip in tqdm(cfg.clips, desc="Graph Extraction", unit="clip"):
                 extract_graph(clip, cfg)
 
         if not cfg.skip_eval:
@@ -143,36 +150,43 @@ def main():
                 use_bnb_4bit=cfg.eval.get("use_bnb_4bit", False),
                 use_bnb_8bit=cfg.eval.get("use_bnb_8bit", False),
             )
-            model_spatial, processor_spatial = get_patched_qwen_for_spatial_grounding(
-                qwen_version=cfg.eval.qwen_version,
-                use_bnb_4bit=cfg.feature_extraction.bnb_4bit,
-                use_bnb_8bit=cfg.feature_extraction.bnb_8bit,
-            )
 
             # triplets and temporal eval
-            for clip in cfg.clips:
+            for clip in tqdm(cfg.clips, desc="Triplets Eval", unit="clip"):
                 evaluate_triplets(clip, cfg, model=model, processor=processor)
-            for clip in cfg.clips:
+            
+            for clip in tqdm(cfg.clips, desc="Temporal Eval", unit="clip"):
                 evaluate_temporal(clip, cfg, model=model, processor=processor)
 
-            # spatial eval
-            for clip in cfg.clips:
-                evaluate_spatial(
-                    clip=clip,
-                    cfg=cfg,
-                    model_spatial=model_spatial,
-                    processor_spatial=processor_spatial,
-                    model=model,
-                    processor=processor,
+            # Only load spatial attention model if spatial evaluation is enabled
+            model_spatial = None
+            processor_spatial = None
+            if cfg.eval is not None and cfg.eval.get("spatial") is not None:
+                model_spatial, processor_spatial = get_patched_qwen_for_spatial_grounding(
+                    qwen_version=cfg.eval.qwen_version,
+                    use_bnb_4bit=cfg.feature_extraction.bnb_4bit,
+                    use_bnb_8bit=cfg.feature_extraction.bnb_8bit,
                 )
-                # Clear VRAM after each clip to prevent OOM
-                gc.collect()
-                torch.cuda.empty_cache()
+                
+                # spatial eval
+                for clip in tqdm(cfg.clips, desc="Spatial Eval", unit="clip"):
+                    evaluate_spatial(
+                        clip=clip,
+                        cfg=cfg,
+                        model_spatial=model_spatial,
+                        processor_spatial=processor_spatial,
+                        model=model,
+                        processor=processor,
+                    )
+                    # Clear VRAM after each clip to prevent OOM
+                    gc.collect()
+                    torch.cuda.empty_cache()
 
             del model
             del processor
-            del model_spatial
-            del processor_spatial
+            if model_spatial is not None:
+                del model_spatial
+                del processor_spatial
             gc.collect()
             torch.cuda.empty_cache()
 
