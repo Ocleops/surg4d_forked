@@ -4,29 +4,35 @@ depth_loss_weight: 1.0
 opacity_loss_weight: 0.0 # does not make sense without densification
 
 # Optical flow loss: encourages Gaussian flow to match RAFT optical flow
-flow_loss_weight: 0.01  # set > 0 to enable (e.g., 0.1), only active in fine stages
+flow_loss_weight: 0.0  # set > 0 to enable (e.g., 0.1), only active in fine stages
 flow_thresh: 0.1  # threshold for large motion mask (filter out noise)
+
+# CoTracker3 control point settings
+cotracker_k_neighbors: 1  # number of nearest control points per Gaussian
+cotracker_idw_power: 2.0  # power parameter for inverse distance weighting
+# TODO: usage not implemented yet
+cotracker_spawn_threshold_pct: 0.1  # spawn new Gaussians when pixels are >X% of image width/height from control points
 
 dynamic_language: true
 dynamic_scale: false
 dynamic_color: false
 
 # coarse iterations cut by 10x because we're only overfitting the feature heads on a single frame
-coarse_base_iterations: 10
-coarse_lang_iterations: 10
-fine_base_iterations: 10000
-fine_lang_iterations: 10000
+coarse_base_iterations: 0
+coarse_lang_iterations: 1
+fine_base_iterations: 500
+fine_lang_iterations: 500
 
 # settings for simplifying coarse training for high quality initial depth map
 # TODO: fix this later, only for debugging
 densify_until_iter: 0
-coarse_freeze_xyz: false # freeze gaussian means during coarse
+coarse_freeze_xyz: true # freeze gaussian means during coarse
 coarse_frame_idx: ${preprocessing.da3_pc_frame_number} # overfit coarse on the frame we initialize from
 
 # fine (dynamic) stage progressive frame sampling window
 progressive_window:
-  enabled: true
-  warmup_iterations: 8000 # lineraly expand window around specified center during warmup
+  enabled: false
+  warmup_iterations: 500 # lineraly expand window around specified center during warmup
   center_frame_idx: ${splat.coarse_frame_idx}
 
 # each stage starts at 0 iterations and the lang stages consider these lists

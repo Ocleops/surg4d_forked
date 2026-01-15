@@ -780,23 +780,23 @@ def scene_reconstruction(
                         else:
                             gt_rgb_for_pc = viewpoint_cam["image"].cuda()
                         
-                        # Sample 25% of points
-                        points, colors = sample_points_with_rgb(
-                            gt_depth_squeezed, gt_rgb_for_pc, K.cuda(), c2w.cuda(),
-                            sample_ratio=0.25
-                        )
+                        # # Sample 25% of points
+                        # points, colors = sample_points_with_rgb(
+                        #     gt_depth_squeezed, gt_rgb_for_pc, K.cuda(), c2w.cuda(),
+                        #     sample_ratio=0.25
+                        # )
                         
-                        if len(points) > 0:
-                            # Convert colors from [0,1] to [0,255] uint8
-                            colors_uint8 = (colors.detach().cpu().numpy() * 255).astype(np.uint8)
-                            rr.log(
-                                "world/point_cloud_depth",
-                                rr.Points3D(
-                                    positions=points.detach().cpu().numpy(),
-                                    colors=colors_uint8,
-                                    radii=0.002,
-                                ),
-                            )
+                        # if len(points) > 0:
+                        #     # Convert colors from [0,1] to [0,255] uint8
+                        #     colors_uint8 = (colors.detach().cpu().numpy() * 255).astype(np.uint8)
+                        #     rr.log(
+                        #         "world/point_cloud_depth",
+                        #         rr.Points3D(
+                        #             positions=points.detach().cpu().numpy(),
+                        #             colors=colors_uint8,
+                        #             radii=0.002,
+                        #         ),
+                        #     )
                 
                     # Log BOTH base and deformed Gaussian means for comparison
                     # Get base Gaussian properties - use raw parameters like the renderer does
@@ -816,16 +816,16 @@ def scene_reconstruction(
                     sampled_colors_rgb = (sampled_shs * 0.28209479177387814 + 0.5).clip(0, 1)
                     sampled_colors_uint8 = (sampled_colors_rgb * 255).clip(0, 255).astype(np.uint8)
                     
-                    # Log BASE (undeformed) Gaussian positions in BLUE
-                    sampled_base_xyz = means3D[sample_indices].detach().cpu().numpy()
-                    rr.log(
-                        "world/gaussians_base",
-                        rr.Points3D(
-                            positions=sampled_base_xyz,
-                            colors=np.full((len(sampled_base_xyz), 3), [0, 100, 255], dtype=np.uint8),  # Blue
-                            radii=0.002,
-                        ),
-                    )
+                    # # Log BASE (undeformed) Gaussian positions in BLUE
+                    # sampled_base_xyz = means3D[sample_indices].detach().cpu().numpy()
+                    # rr.log(
+                    #     "world/gaussians_base",
+                    #     rr.Points3D(
+                    #         positions=sampled_base_xyz,
+                    #         colors=np.full((len(sampled_base_xyz), 3), [0, 100, 255], dtype=np.uint8),  # Blue
+                    #         radii=0.002,
+                    #     ),
+                    # )
                     
                     # Create time tensor for all Gaussians - use repeat() like the renderer
                     time_tensor = torch.tensor(viewpoint_cam.time).to(means3D.device).repeat(means3D.shape[0], 1)
@@ -836,16 +836,46 @@ def scene_reconstruction(
                             means3D, scales, rotations, opacity, shs, language_feature, time_tensor
                         )
                     
-                    # Log DEFORMED Gaussian positions with actual colors
-                    sampled_deformed_xyz = means3D_deformed[sample_indices].detach().cpu().numpy()
-                    rr.log(
-                        "world/gaussians_deformed",
-                        rr.Points3D(
-                            positions=sampled_deformed_xyz,
-                            colors=sampled_colors_uint8,
-                            radii=0.003,
-                        ),
-                    )
+                    # # Log DEFORMED Gaussian positions with actual colors
+                    # sampled_deformed_xyz = means3D_deformed[sample_indices].detach().cpu().numpy()
+                    # rr.log(
+                    #     "world/gaussians_deformed",
+                    #     rr.Points3D(
+                    #         positions=sampled_deformed_xyz,
+                    #         colors=sampled_colors_uint8,
+                    #         radii=0.003,
+                    #     ),
+                    # )
+
+                    # Log the precomputed positions, using viewpoint_cam.time to get the frame index
+                    if gaussians._control_point_positions_precomputed is not None and gaussians._is_control_point_driven is not None:
+                        frame_idx = int(time_tensor[0, 0].item() * (gaussians._num_frames - 1))
+                        precomputed_positions = gaussians._control_point_positions_precomputed[frame_idx]
+                        
+                        # Filter sample_indices to only include control-point-driven Gaussians
+                        control_point_driven_mask = gaussians._is_control_point_driven
+                        control_sample_mask = control_point_driven_mask[sample_indices]
+                        control_sample_indices = sample_indices[control_sample_mask]
+
+                        # Pick only 10% of these after random permutation
+                        control_sample_indices = control_sample_indices[torch.randperm(len(control_sample_indices))[:int(len(control_sample_indices) * 0.75)]]
+                        control_sample_colors = (shs[control_sample_indices, 0, :].detach().cpu().numpy() * 0.28209479177387814 + 0.5).clip(0, 1)
+
+                        
+                        # Since _is_control_point_driven marks the first n_control_driven Gaussians as True,
+                        # and precomputed_positions contains positions for those Gaussians in the same order,
+                        # the indices directly correspond (control_sample_indices are already the correct indices)
+                        if len(control_sample_indices) > 0:
+                            sampled_precomputed_positions = precomputed_positions[control_sample_indices].detach().cpu().numpy()
+                            rr.log(
+                                "world/gaussians_precomputed",
+                                rr.Points3D(
+                                    positions=sampled_precomputed_positions,
+                                    # Use the colors of the control point driven Gaussians
+                                    colors=control_sample_colors,
+                                    radii=0.003,
+                                ),
+                            )
 
                     
         # print(f"language_feature.max():{language_feature.max()},language_feature.min():f{language_feature.min()}")

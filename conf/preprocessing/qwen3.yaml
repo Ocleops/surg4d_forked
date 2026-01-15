@@ -33,3 +33,6 @@ pc_ply_visualization_filename: pointcloud_viz.ply # set to None to disable
 
 # instance mask conversion
 min_component_area: 5 # minimum area of a component to be considered an instance
+
+# CoTracker3 settings
+cotracker_grid_size: 48 # control point grid size (grid_size x grid_size)

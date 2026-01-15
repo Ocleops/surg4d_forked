@@ -163,6 +163,8 @@ def filter_gaussians(gaussians: GaussianModel, mask: torch.Tensor):
         gaussians (GaussianModel): The gaussian model to filter.
         mask (torch.Tensor): The mask to filter the gaussians. Shape (n_gaussians,)
     """
+    n_gaussians = len(mask)
+    
     for prop in dir(gaussians):
         # Skip @property decorated attributes
         if isinstance(getattr(type(gaussians), prop, None), property):
@@ -171,9 +173,13 @@ def filter_gaussians(gaussians: GaussianModel, mask: torch.Tensor):
         attribute = getattr(gaussians, prop)
         a_type = type(attribute)
         if a_type == torch.Tensor or a_type == torch.nn.Parameter:
-            if attribute.shape[0] == len(mask):
+            if attribute.shape[0] == n_gaussians:
                 setattr(gaussians, prop, attribute[mask])
                 logger.info(f"Filtered {prop} with shape {attribute.shape}")
+            # Handle _control_point_positions_precomputed which has shape (T, N, 3)
+            elif attribute.ndim == 3 and attribute.shape[1] == n_gaussians:
+                setattr(gaussians, prop, attribute[:, mask, :])
+                logger.info(f"Filtered {prop} along dim 1 with shape {attribute.shape}")
 
 
 def normalize_indep_dim(x):
@@ -213,10 +219,30 @@ def deform_at_timestep(gaussians: GaussianModel, timestep: float):
             dtype=means3D.dtype,
         )
 
-        # Single pass through deformation network
+        # Apply deformation to all Gaussians (same as renderer)
         means3D_final, _, _, _, _, lang_final, _ = gaussians._deformation(
             means3D, scales, rotations, opacity, shs, lang, time
         )
+        
+        # Replace positions for control-point-driven Gaussians with precomputed positions
+        # (same logic as in gaussian_renderer/__init__.py)
+        if gaussians._is_control_point_driven is not None and gaussians._control_point_positions_precomputed is not None:
+            # Convert normalized time (0-1) to frame index
+            time_value = time[0, 0].item()
+            frame_idx = int(time_value * (gaussians._num_frames - 1))
+            frame_idx = max(0, min(frame_idx, gaussians._num_frames - 1))
+            
+            # Get precomputed positions for this frame
+            control_point_positions_full = gaussians._control_point_positions_precomputed[frame_idx]  # (N_gaussians, 3)
+            
+            # Ensure shapes match
+            assert control_point_positions_full.shape[0] == means3D_final.shape[0], \
+                f"Mismatch: control_point_positions_full has {control_point_positions_full.shape[0]} positions, " \
+                f"but means3D_final has {means3D_final.shape[0]} Gaussians"
+            
+            # Replace means3D_final for control-point-driven Gaussians with precomputed positions
+            means3D_final = means3D_final.clone()  # Clone to avoid in-place modification
+            means3D_final[gaussians._is_control_point_driven] = control_point_positions_full[gaussians._is_control_point_driven].detach()
 
         positions = means3D_final.detach().cpu().numpy()
         lang_patch = lang_final[:, :3].detach().cpu().numpy()
@@ -823,14 +849,25 @@ def extract_graph(clip: DictConfig, cfg: DictConfig):
     # Load model
     gaussians, scene, dataset, args, pipeline = load_gaussian_model(clip, cfg)
 
-    # gaussian filtering before clustering
-    with torch.no_grad():
-        opacity = gaussians.get_opacity.squeeze()  # (N,)
-        lang = gaussians.get_language_feature      # (N, D_latent)
-        lang_norm = lang.norm(dim=-1)              # (N,)
-        relevance = opacity * lang_norm
-        mask = relevance >= cfg.graph_extraction.relevance_threshold
-    filter_gaussians(gaussians, mask)
+    # # gaussian filtering before clustering
+    # with torch.no_grad():
+    #     opacity = gaussians.get_opacity.squeeze()  # (N,)
+    #     lang = gaussians.get_language_feature      # (N, D_latent)
+    #     lang_norm = lang.norm(dim=-1)              # (N,)
+    #     relevance = opacity * lang_norm
+    #     mask = relevance >= cfg.graph_extraction.relevance_threshold
+        
+    #     n_kept = mask.sum().item()
+    #     n_total = mask.shape[0]
+    #     logger.info(f"Relevance filtering: {n_kept}/{n_total} Gaussians pass threshold {cfg.graph_extraction.relevance_threshold}")
+    #     logger.info(f"  opacity range: [{opacity.min().item():.4f}, {opacity.max().item():.4f}]")
+    #     logger.info(f"  lang_norm range: [{lang_norm.min().item():.4f}, {lang_norm.max().item():.4f}]")
+    #     logger.info(f"  relevance range: [{relevance.min().item():.4f}, {relevance.max().item():.4f}]")
+        
+    #     if n_kept == 0:
+    #         logger.warning("All Gaussians filtered out! Skipping relevance filtering.")
+    #     else:
+    #         filter_gaussians(gaussians, mask)
 
     # Cluster, filter clusters, optional mask-based filtering, then drop -1s
     if cfg.graph_extraction.cluster_method == "hdbscan":

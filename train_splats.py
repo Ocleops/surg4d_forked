@@ -338,9 +338,6 @@ def main(cfg: DictConfig):
 
     for clip in tqdm(cfg.clips, desc="Training splats", unit="clip"):
         train_splat(clip, cfg)
-        # TODO: only for debugging, remove later
-        break
-
 
 if __name__ == "__main__":
     main()
