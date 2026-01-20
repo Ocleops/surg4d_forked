@@ -1120,7 +1120,6 @@ def prompt_graph_agent(
     system_prompt: str = None,
     max_iterations: int = 20,
     tool_call_limits: Optional[Dict[str, Optional[int]]] = None,
-    fps: float = None,
     verbose: bool = False,
     seed: int = 42,
 ):
@@ -1135,7 +1134,6 @@ def prompt_graph_agent(
     processor: Qwen2_5_VLProcessor - processor to use
     system_prompt: str - system prompt to use
     tools: Dict[str, Tuple[Callable, Dict[str, Any]]] - tools to use
-    fps: Optional frames per second. If provided, uses seconds format instead of timestep.
     verbose: If True, prints message and tool results at each iteration.
     """
     assert qwen_version == "qwen3", "qwen3 is required for graph agentic prompting"
@@ -1154,17 +1152,11 @@ def prompt_graph_agent(
     extents = node_extents[initial_timestep_idx]
     centers = node_centers[initial_timestep_idx]
 
-    # Format time reference
-    if fps is not None:
-        time_attr = f'timestep="{initial_timestep_idx}" {timestep_to_seconds_str(initial_timestep_idx, fps)}'
-    else:
-        time_attr = f'timestep="{initial_timestep_idx}"'
-
     graph_content = []
     graph_content.append(
         {
             "type": "text",
-            "text": f'<graph-nodes {time_attr}>\n',
+            "text": f'<graph-nodes timestep="{initial_timestep_idx}">\n',
         }
     )
     for n in range(centroids.shape[0]):

@@ -829,7 +829,6 @@ def graph_agent_queries(
             system_prompt=system_prompt,
             max_iterations=cfg.eval.temporal.graph_agent_max_iterations,
             tool_call_limits=tool_call_limits,
-            fps=effective_fps,
         )
         
         # Extract response (agent_result is a dict when tools are used)
