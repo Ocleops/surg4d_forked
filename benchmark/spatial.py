@@ -1192,10 +1192,6 @@ def graph_agent_predict_query_list(
             max_iterations=max_iterations,
             tool_call_limits=tool_call_limits,
         )
-        
-        # Stop recording if tool visualization is enabled
-        if tool_viz_dir is not None and graph_tools is not None:
-            graph_tools.stop_recording()
 
         response = agent_result["final_answer"]
 
@@ -1203,6 +1199,10 @@ def graph_agent_predict_query_list(
         sanitized_tool_calls = sanitize_tool_calls(agent_result.get("tool_calls", []))
         message_history = agent_result.get("message_history", [])
         if point3d is None:
+            # Stop recording if tool visualization is enabled (failed prediction)
+            if tool_viz_dir is not None and graph_tools is not None:
+                graph_tools.stop_recording()
+            
             # 3D failure: fall back to 2D corner pixel (0,0), omit 3D position to avoid skew
             out_item = {
                 "query": substring,
@@ -1221,6 +1221,31 @@ def graph_agent_predict_query_list(
         # Project to pixel coords - convert normalized point back to original coords first
         pos_arr = np.array(point3d, dtype=np.float32).reshape(1, 3)
         pos_arr_original = point_n2o(pos_arr)
+        
+        # Log final prediction to rerun before stopping recording
+        if tool_viz_dir is not None and graph_tools is not None:
+            # Use rerun logger from the GraphTools instance
+            from rerun_utils import _compute_scene_extent
+            
+            graph_tools.rr.set_time("timestep", sequence=int(timestep_idx))
+            
+            # Compute appropriate point size based on scene extent
+            scene_extent = _compute_scene_extent(graph_tools.positions[timestep_idx])
+            point_radius = max(scene_extent * 0.025, 1e-4)  # Larger than tool points (0.008)
+            
+            # Log the final prediction as a big red point
+            graph_tools.rr.log(
+                "zz_final_prediction",
+                graph_tools.rr.Points3D(
+                    positions=pos_arr_original,
+                    colors=[[255, 0, 0]],  # Bright red
+                    radii=point_radius,
+                    labels=[f"prediction: {substring}"],
+                    show_labels=True,
+                )
+            )
+            
+            graph_tools.stop_recording()
         pixels = project_3d_to_2d(pos_arr_original, proj_matrix, img_width, img_height)
 
         out_item = {

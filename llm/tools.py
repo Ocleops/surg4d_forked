@@ -1186,6 +1186,7 @@ class GraphTools:
         # Tool call logging state
         self.call_counter = 0
         self.recording_active = False
+        self.rr = rr  # Store rerun instance for external logging access
 
     def start_recording(self, rrd_file: str):
         """Initialize rerun recording to the specified file and log initial graph state.

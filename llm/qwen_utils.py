@@ -232,7 +232,6 @@ def get_patched_qwen3(
     model.generation_config.return_legacy_cache = False
     if repetition_penalty is not None:
         model.generation_config.repetition_penalty = repetition_penalty
-    print(model.generation_config.repetition_penalty)
     model.eval()
     return model, processor
 

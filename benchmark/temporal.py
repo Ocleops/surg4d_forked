@@ -733,11 +733,6 @@ def graph_agent_queries(
     # Get number of timesteps
     num_ts = adjacency.shape[0]
     
-    # Calculate effective FPS based on stride (same logic as multiframe_queries)
-    # The graph has num_ts timesteps sampled from len(video_frames) video frames
-    stride = max(1, round(len(video_frames) / num_ts))
-    effective_fps = cfg.eval.video_fps / stride
-    
     # Load autoencoder for highres inspection tools (following spatial pattern)
     clip_dir = Path(cfg.preprocessed_root) / clip.name
     autoencoder_path = clip_dir / cfg.eval.temporal.graph_agent_autoencoder_checkpoint_subdir / "best_ckpt.pth"
@@ -864,20 +859,8 @@ def graph_agent_queries(
             message_history = []
         
         # Parse response
+        # Graph agent now returns timesteps directly (not seconds), so no conversion needed
         predicted = parser_map[query_type](response, query_type)
-        
-        # Convert seconds to timesteps if using seconds format (same logic as multiframe)
-        if predicted and 'second' in predicted:
-            # Convert single second to timestep
-            predicted['timestep'] = seconds_to_timestep(predicted['second'], num_ts, effective_fps)
-        elif predicted and 'second_ranges' in predicted:
-            # Convert second ranges to timestep ranges
-            timestep_ranges = []
-            for start_sec, end_sec in predicted['second_ranges']:
-                start_timestep = seconds_to_timestep(start_sec, num_ts, effective_fps)
-                end_timestep = seconds_to_timestep(end_sec, num_ts, effective_fps)
-                timestep_ranges.append([start_timestep, end_timestep])
-            predicted['ranges'] = timestep_ranges
         
         results.append({
             'query_id': query_anno['query_id'],

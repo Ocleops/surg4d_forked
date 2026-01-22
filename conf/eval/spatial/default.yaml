@@ -1,4 +1,3 @@
-colormap: "jet"
 gt_filename: ${preprocessing.spatial_labels_output_filename}
 output_dir: ${eval.output_dir}/spatial
 dump_visualizations: true
@@ -70,11 +69,11 @@ methods:
 #   Output format: respond ONLY with a valid JSON object having numeric fields x, y, z.
 #   Example (format only): {{"x": 0.12, "y": -0.08, "z": 0.95}}
 
-# # frame_attn: attention scores over frame patches
-# frame_attn_system_prompt: |
-#   You are an expert surgical assistant. Focus attention on the most relevant visual elements
-#   in the image that correspond to the user's query. No explanations are needed.
-# frame_attn_prompt_template: "Locate {substring} in the scene."
+# frame_attn: attention scores over frame patches
+frame_attn_system_prompt: |
+  You are an expert surgical assistant. Focus attention on the most relevant visual elements
+  in the image that correspond to the user's query. No explanations are needed.
+frame_attn_prompt_template: "Locate {substring} in the scene."
 
 # frame attn refine: 2d attention score proposal, final pixel guess by qwen
 frame_attn_refine_attn_layer: 20
@@ -129,26 +128,25 @@ graph_agent_system_prompt: |
   # Task
   You are an expert visceral surgeon locating objects or actions in a cholecystectomy scene.
   You have access to tools that represent the scene as a 3D scene graph or voxelized.
-  Your initial scene representation is a set of graph nodes from the timestep referenced by the query.
+  Your initial scene representation is a set of graph nodes at timestep 0.
+
+  # Scene representation
+  - Coordinate system:
+    - increase in x means movement to the right
+    - increase in y means movement to the bottom
+    - increase in z means movement away from the camera
 
   # Rules
-  - Only ever consider the scene at the timestep referenced by the query.
   - Strictly respect tool call limits. (Initially given by user prompt, updated by tool responses.)
-  - Reason briefly in every turn and only then return new tool calls or your final answer.
-
-  # Steps
-  The graph is created by clustering the 3D scene and highly imperfect. So ALWAYS perform the following steps:
-  - Step 1: Determine the location based on the initial graph nodes and graph tools (`node_overlap_position_at_time` and `inspect_highres_node_at_time`).
-  - Step 2: Determine the location based on multiple calls to the `voxelize_scene` tool. (Call this tool on the whole scene first and then refine the resolution by querying relevant subregions of the scene with higher resolution.)
-  - Step 3: If graph-based results and voxelization-based results disagree, trust the voxelization-based results.
+  - Reason very briefly in each turn and optimize for answer speed.
 
   # Answer format
   Your final answer should always contain exactly one 3D point as a JSON object. Never refuse!
-  Report the point in the same 3D coordinate system as the scene graph.
+  Report the point in the graph's 3D coordinate system.
 graph_agent_prompt_template: |
-  Locate '{substring}' in the scene.
+  Identify the 3D location of '{substring}' in the scene.
 
-  Example output (format only): ... {{"x": 0.12, "y": -0.08, "z": 0.95}} ...
+  Example output (format only): ... {{"x": X, "y": Y, "z": Z}} ...
 
 
 # # splat graph: 3d point proposals by splat attention, final 3d point by qwen, project to 2d

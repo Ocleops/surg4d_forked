@@ -31,10 +31,6 @@ from benchmark.spatial import (
     frame_direct_feat_queries,
     graph_agent_feat_queries,
 )
-from rerun_utils import (
-    init_and_save_rerun,
-    log_spatial_predictions,
-)
 
 
 def _build_benchmark_config(cfg: DictConfig, clip: DictConfig) -> BenchmarkConfig:
@@ -411,19 +407,6 @@ def evaluate_spatial(
                     viz_dir=Path(cfg.eval.spatial.visualizations_dir),
                     method_name=viz_name,
                 )
-
-    # Initialize rerun sink for spatial visualization
-    init_and_save_rerun(graph_dir / "visualization_spatial.rrd")
-
-    # Log results for each method that was run
-    for method_key in all_results:
-        log_spatial_predictions(
-            base_path=method_key,
-            clip_name=clip.name,
-            positions_through_time=positions,
-            results=all_results[method_key],
-            cmap_name=cfg.eval.spatial.colormap,
-        )
 
 
 @hydra.main(config_path="conf", config_name="config.yaml", version_base="1.3")
