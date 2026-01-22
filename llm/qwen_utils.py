@@ -340,7 +340,7 @@ def ask_qwen_about_image(
     model: Qwen2_5_VLForConditionalGeneration,
     processor: Qwen2_5_VLProcessor,
     system_prompt: str = "You are a medical assistant designed to aid medical practitioners during a cholecystectomy procedure. The surgeon user will ask you a question and show you their current situation, and you give a concise answer.",
-    max_tokens: int = 128,
+    max_tokens: int = 5012,
     seed: int = 42,
 ):
     messages = [
@@ -405,7 +405,7 @@ def ask_qwen_about_image_features(
     model: Qwen2_5_VLForConditionalGeneration,
     processor: Qwen2_5_VLProcessor,
     system_prompt: str = "You are a medical assistant designed to aid medical practitioners during a cholecystectomy procedure. The surgeon user will ask you a question and show you their current situation, and you give a concise answer.",
-    max_tokens: int = 128,
+    max_tokens: int = 5012,
     seed: int = 42,
 ):
     messages = [
@@ -479,7 +479,7 @@ def generate_with_vision_features(
     model: Union[Qwen2_5_VLForConditionalGeneration, Qwen3VLForConditionalGeneration],
     processor: Union[Qwen2_5_VLProcessor, Qwen3VLProcessor],
     qwen_version: str = "qwen25",
-    max_tokens: int = 128,
+    max_tokens: int = 5012,
     seed: int = 42,
 ):
     """Generate text from vision features.
@@ -1669,7 +1669,7 @@ def prompt_with_video_frames(
     processor: Union[Qwen2_5_VLProcessor, Qwen3VLProcessor],
     qwen_version: str = "qwen3",
     system_prompt: str = None,
-    max_tokens: int = 2048,
+    max_tokens: int = 5012,
     fps: float = None,
     seed: int = 42,
 ) -> str:

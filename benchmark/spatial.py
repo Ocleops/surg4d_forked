@@ -1566,14 +1566,12 @@ def frame_attn_refine_predict_query_list(
                 ]
             question = question + "\n\n" + "\n".join(lines)
 
-        # Ask normal Qwen with the image
         response = ask_qwen_about_image(
             image=image,
             prompt=question,
             model=model,
             processor=processor,
             system_prompt=system_prompt_refine,
-            max_tokens=5012,
         )
 
         px = _parse_pixel_from_json(
@@ -1752,7 +1750,6 @@ def frame_direct_predict_query_list(
             model=model,
             processor=processor,
             system_prompt=system_prompt,
-            max_tokens=5012,
         )
 
         px = _parse_pixel_from_json(

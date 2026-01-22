@@ -435,7 +435,6 @@ def multiframe_queries(
             last_frame=len(selected_frames) - 1,
         )
         
-        # Query model
         response = prompt_with_video_frames(
             question=prompt,
             image_paths=selected_frames,
@@ -443,7 +442,6 @@ def multiframe_queries(
             processor=processor,
             qwen_version=cfg.eval.qwen_version,
             system_prompt=system_prompt,
-            max_tokens=2048,
             fps=effective_fps,
         )
         
