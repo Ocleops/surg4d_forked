@@ -14,20 +14,6 @@ from rerun_utils import _compute_scene_extent
 IMAGE_PLACEHOLDER = "<image/>"
 
 
-def timestep_to_seconds_str(timestep: int, fps: float) -> str:
-    """Convert timestep index to Qwen3 temporal format.
-    
-    Args:
-        timestep: Integer timestep index
-        fps: Frames per second
-        
-    Returns:
-        Formatted string like "<3.0 seconds>"
-    """
-    seconds = timestep / fps
-    return f"<{seconds:.1f} seconds>"
-
-
 # helpers
 
 
@@ -91,7 +77,6 @@ def node_distances_through_time(
     centroids: np.ndarray,
     node_id_1: int,
     node_id_2: int,
-    fps: float = None,
     toolkit: Optional['GraphTools'] = None,
 ) -> Dict[str, Any]:
     n_timesteps = centroids.shape[0]
@@ -122,8 +107,6 @@ def node_distances_through_time(
                 4,
             ),
         }
-        if fps is not None:
-            dist_entry["time"] = timestep_to_seconds_str(t, fps)
         distances.append(dist_entry)
 
     # Rerun logging
@@ -223,7 +206,6 @@ def node_overlap_scores_through_time(
     bhattacharyya_coeffs: np.ndarray,
     node_id_1: int,
     node_id_2: int,
-    fps: float = None,
     toolkit: Optional['GraphTools'] = None,
 ) -> Dict[str, Any]:
     """Return the Bhattacharyya coefficients (overlap scores) between two nodes through time.
@@ -232,7 +214,6 @@ def node_overlap_scores_through_time(
         bhattacharyya_coeffs: Dense Bhattacharyya coefficients (T, n_clusters, n_clusters)
         node_id_1: First node id
         node_id_2: Second node id
-        fps: Optional frames per second. If provided, uses seconds format instead of timestep.
         toolkit: Optional GraphTools instance for rerun logging
 
     Returns:
@@ -263,8 +244,6 @@ def node_overlap_scores_through_time(
                 float(bhattacharyya_coeffs[t, node_id_1, node_id_2]), 4
             ),
         }
-        if fps is not None:
-            score_entry["time"] = timestep_to_seconds_str(t, fps)
         overlap_scores.append(score_entry)
 
     # Rerun logging
@@ -366,7 +345,6 @@ def node_overlap_position_at_time(
     node_id_1: int,
     node_id_2: int,
     timestep: int,
-    fps: float = None,
     toolkit: Optional['GraphTools'] = None,
 ) -> Dict[str, Any]:
     n_timesteps = centroids.shape[0]
@@ -424,9 +402,6 @@ def node_overlap_position_at_time(
         "timestep": int(timestep),
         "point": [round(float(p), 4) for p in contact_point],
     }
-    
-    if fps is not None:
-        result["time"] = timestep_to_seconds_str(timestep, fps)
 
     # Rerun logging
     if toolkit is not None and toolkit.recording_active:
@@ -501,7 +476,6 @@ def inspect_highres_node_at_time(
     autoencoder: QwenAutoencoder,
     node_id: int,
     timestep: int,
-    fps: float = None,
     toolkit: Optional['GraphTools'] = None,
 ) -> Dict[str, Any]:
     """Decode and return all gaussian features for a node at a timestep.
@@ -512,7 +486,6 @@ def inspect_highres_node_at_time(
         autoencoder: QwenAutoencoder to decode latents to full features
         node_id: The node/cluster id to inspect
         timestep: The timestep to inspect
-        fps: Optional frames per second. If provided, uses seconds format instead of timestep.
         toolkit: Optional GraphTools instance for rerun logging
 
     Returns:
@@ -561,9 +534,6 @@ def inspect_highres_node_at_time(
         "n_gaussians": min(MAX_GAUSSIANS_PER_CLUSTER, latents.shape[0]),
         "detailed_view": IMAGE_PLACEHOLDER,
     }
-    
-    if fps is not None:
-        result["time"] = timestep_to_seconds_str(timestep, fps)
 
     # Rerun logging
     if toolkit is not None and toolkit.recording_active:
@@ -620,7 +590,6 @@ def inspect_node_through_time(
     centers: np.ndarray,
     extents: np.ndarray,
     node_id: int,
-    fps: float = None,
     toolkit: Optional['GraphTools'] = None,
 ) -> Dict[str, Any]:
     """Return lowres visual descriptors and properties for a node through all timesteps.
@@ -631,7 +600,6 @@ def inspect_node_through_time(
         centers: Cluster centers through time (T, n_clusters, 3)
         extents: Cluster extents through time (T, n_clusters, 3)
         node_id: The node/cluster id to inspect
-        fps: Optional frames per second. If provided, uses seconds format instead of timestep.
         toolkit: Optional GraphTools instance for rerun logging
 
     Returns:
@@ -683,10 +651,6 @@ def inspect_node_through_time(
                 "z": round(float(ext[2]), 2),
             },
         }
-        
-        if fps is not None:
-            entry["time"] = timestep_to_seconds_str(t, fps)
-            
         timesteps_data.append(entry)
 
         # Add vision features for this timestep
@@ -750,7 +714,6 @@ def inspect_scene_at_time(
     centers: np.ndarray,
     extents: np.ndarray,
     timestep: int,
-    fps: float = None,
     toolkit: Optional['GraphTools'] = None,
 ) -> Dict[str, Any]:
     """Return the complete scene state at a given timestep.
@@ -761,7 +724,6 @@ def inspect_scene_at_time(
         centers: Cluster centers through time (T, n_clusters, 3)
         extents: Cluster extents through time (T, n_clusters, 3)
         timestep: The timestep to inspect
-        fps: Optional frames per second. If provided, uses seconds format instead of timestep.
         toolkit: Optional GraphTools instance for rerun logging
 
     Returns:
@@ -818,9 +780,6 @@ def inspect_scene_at_time(
         "timestep": int(timestep),
         "nodes": nodes_data,
     }
-    
-    if fps is not None:
-        result["time"] = timestep_to_seconds_str(timestep, fps)
 
     # Rerun logging
     if toolkit is not None and toolkit.recording_active:
@@ -919,7 +878,6 @@ def voxelize_scene(
     autoencoder: QwenAutoencoder,
     timestep: int,
     bbox: List[float] = None,
-    fps: float = None,
     toolkit: Optional['GraphTools'] = None,
 ) -> Dict[str, Any]:
     """Sample the scene at regular 3D spatial locations with visual descriptors per location.
@@ -940,7 +898,6 @@ def voxelize_scene(
               If None, samples the entire scene.
               NOTE: This format corresponds to Omni3D bbox format without rotation,
               which Qwen3 was trained on - important for paper justification.
-        fps: Optional frames per second. If provided, uses seconds format instead of timestep.
         toolkit: Optional GraphTools instance for rerun logging
 
     Returns:
@@ -1033,10 +990,9 @@ def voxelize_scene(
                 voxel_indices_for_logging.append(voxel_idx)
 
     if len(voxels_data) == 0:
-        time_ref = timestep_to_seconds_str(timestep, fps) if fps is not None else f"timestep {timestep}"
         return {
             "text": json.dumps(
-                {"error": f"No voxels containing scene content found for {time_ref} and bbox {bbox} - are you sure the bbox is sensible?"}
+                {"error": f"No voxels containing scene content found for timestep {timestep} and bbox {bbox} - are you sure the bbox is sensible?"}
             )
         }
 
@@ -1048,9 +1004,6 @@ def voxelize_scene(
         else None,
         "voxels": voxels_data,
     }
-    
-    if fps is not None:
-        response_data["time"] = timestep_to_seconds_str(timestep, fps)
 
     # Rerun logging
     if toolkit is not None and toolkit.recording_active:
@@ -1200,7 +1153,6 @@ class GraphTools:
             Required for inspect_highres_node_at_time. Only available when store_verbose=True.
         autoencoder: QwenAutoencoder instance for decoding latent features.
             Required for inspect_highres_node_at_time.
-        fps: Optional frames per second. If provided, tools will report time in seconds format.
     """
 
     def __init__(
@@ -1215,7 +1167,6 @@ class GraphTools:
         qwen_feats,
         patch_latents_through_time: np.ndarray,
         autoencoder: QwenAutoencoder,
-        fps: float = None,
     ):
         self.positions = positions
         self.clusters = clusters
@@ -1227,7 +1178,6 @@ class GraphTools:
         self.qwen_feats = qwen_feats
         self.patch_latents_through_time = patch_latents_through_time
         self.autoencoder = autoencoder
-        self.fps = fps
 
         self.point_o2n, self.point_n2o, self.distance_o2n, self.distance_n2o = (
             get_coord_transformations(positions)
@@ -1289,7 +1239,6 @@ class GraphTools:
                 partial(
                     node_distances_through_time,
                     centroids=self.point_o2n(self.centroids),
-                    fps=self.fps,
                     toolkit=self,
                 ),
                 spec_node_distances_through_time,
@@ -1298,7 +1247,6 @@ class GraphTools:
                 partial(
                     node_overlap_scores_through_time,
                     bhattacharyya_coeffs=self.bhattacharyya_coeffs,
-                    fps=self.fps,
                     toolkit=self,
                 ),
                 spec_node_overlap_scores_through_time,
@@ -1309,7 +1257,6 @@ class GraphTools:
                     positions=self.point_o2n(self.positions),
                     clusters=self.clusters,
                     centroids=self.point_o2n(self.centroids),
-                    fps=self.fps,
                     toolkit=self,
                 ),
                 spec_node_overlap_position_at_time,
@@ -1320,7 +1267,6 @@ class GraphTools:
                     patch_latents_through_time=self.patch_latents_through_time,
                     clusters=self.clusters,
                     autoencoder=self.autoencoder,
-                    fps=self.fps,
                     toolkit=self,
                 ),
                 spec_inspect_highres_node_at_time,
@@ -1332,7 +1278,6 @@ class GraphTools:
                     centroids=self.point_o2n(self.centroids),
                     centers=self.point_o2n(self.centers),
                     extents=self.distance_o2n(self.extents),
-                    fps=self.fps,
                     toolkit=self,
                 ),
                 spec_inspect_node_through_time,
@@ -1344,7 +1289,6 @@ class GraphTools:
                     centroids=self.point_o2n(self.centroids),
                     centers=self.point_o2n(self.centers),
                     extents=self.distance_o2n(self.extents),
-                    fps=self.fps,
                     toolkit=self,
                 ),
                 spec_inspect_scene_at_time,
@@ -1355,7 +1299,6 @@ class GraphTools:
                     positions=self.point_o2n(self.positions),
                     patch_latents_through_time=self.patch_latents_through_time,
                     autoencoder=self.autoencoder,
-                    fps=self.fps,
                     toolkit=self,
                 ),
                 spec_voxelize_scene,
