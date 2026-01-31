@@ -29,6 +29,7 @@ spectral_clustering:
   knn_graph_k: 20
   spectral_embedding_dim: 5
   noise_assignment_k: 256
+  soft_clustering: true
   hdbscan_args:
     min_cluster_size: 300
     min_samples: 300
@@ -51,6 +52,5 @@ graph_edge_threshold: 0.05 # edge if bhattacharyya coefficient >= threshold
 
 # outputs
 store_verbose: true  # save verbose outputs (renders, palettes, raw gaussians, etc.)
-n_render_views: 1  # number of random camera views to render (only if store_verbose is true)
 
 random_seed: 1234

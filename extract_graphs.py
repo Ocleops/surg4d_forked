@@ -1,7 +1,8 @@
-from sklearn.cluster import HDBSCAN
+import hdbscan
 from pynndescent import NNDescent
 import scipy.sparse as sp
 from scipy.linalg import eig, eigh
+from scipy.spatial import cKDTree
 import torch
 import argparse
 import numpy as np
@@ -371,7 +372,7 @@ def spectral_embeddings(L, d, normalize_rows: bool, use_symmetric_eigensolver: b
 
 
 def ng_jordan_weiss_spectral_clustering(
-    A, spectral_embedding_dim: int, hdbscan_args: dict
+    A, spectral_embedding_dim: int, hdbscan_args: dict, soft_clustering: bool = False
 ):
     """Spectral clustering with symmetric, normalized Laplacian.
     Heuristically approximates normalized cut (not principled like Shi-Malik),
@@ -386,9 +387,11 @@ def ng_jordan_weiss_spectral_clustering(
         A: Adjacency matrix (n x n)
         spectral_embedding_dim: Number of eigenvectors for embedding
         hdbscan_args: Arguments for HDBSCAN clustering
+        soft_clustering: If True, use soft clustering to assign all points (no noise).
+            If False, use regular HDBSCAN with noise points marked as -1.
 
     Returns:
-        clusters: Cluster assignments (n,), -1 for noise
+        clusters: Cluster assignments (n,), -1 for noise (only if soft_clustering=False)
     """
     n_samples = A.shape[0]
     n_components, component_labels = sp.csgraph.connected_components(A, directed=False)
@@ -403,6 +406,22 @@ def ng_jordan_weiss_spectral_clustering(
         f"[spectral] Components >= min_cluster_size: {(comp_sizes >= hdbscan_args.min_cluster_size).sum()}"
     )
 
+    def assign_noise_to_nearest(T: np.ndarray, clusters: np.ndarray) -> np.ndarray:
+        """Assign noise points (-1) to their nearest non-noise neighbor's cluster."""
+        noise_mask = clusters == -1
+        if not noise_mask.any():
+            return clusters
+        valid_mask = ~noise_mask
+        if not valid_mask.any():
+            return clusters  # all noise, nothing to assign to
+        # for each noise point, find nearest valid point
+        tree = cKDTree(T[valid_mask])
+        _, nearest_idx = tree.query(T[noise_mask], k=1)
+        # map back to original indices
+        valid_indices = np.where(valid_mask)[0]
+        clusters[noise_mask] = clusters[valid_indices[nearest_idx]]
+        return clusters
+
     # if graph connected, cluster and return
     if n_components == 1:
         L = laplacian_sym(A)
@@ -412,11 +431,13 @@ def ng_jordan_weiss_spectral_clustering(
             normalize_rows=True,
             use_symmetric_eigensolver=True,
         )
-        clusters = HDBSCAN(**hdbscan_args).fit_predict(T)
+        clusters = hdbscan.HDBSCAN(**hdbscan_args).fit_predict(T)
         hdbscan_noise = (clusters == -1).sum()
-        print(
-            f"[spectral] Noise: {hdbscan_noise} total, {0} disconnected, {hdbscan_noise} HDBSCAN"
-        )
+        if soft_clustering:
+            clusters = assign_noise_to_nearest(T, clusters)
+            print(f"[spectral] Assigned {hdbscan_noise} noise points to nearest clusters")
+        else:
+            print(f"[spectral] Noise: {hdbscan_noise} total, 0 disconnected, {hdbscan_noise} HDBSCAN")
         return clusters
 
     # if disconnected graph, cluster each component separately
@@ -446,20 +467,23 @@ def ng_jordan_weiss_spectral_clustering(
         T_sub = spectral_embeddings(
             L_sub, d=d, normalize_rows=True, use_symmetric_eigensolver=True
         )
-        comp_clusters = HDBSCAN(**hdbscan_args).fit_predict(T_sub)
-
-        # count hdbscan noise
-        hdbscan_noise += (comp_clusters == -1).sum()
-
+        comp_clusters = hdbscan.HDBSCAN(**hdbscan_args).fit_predict(T_sub)
+        comp_noise = (comp_clusters == -1).sum()
+        hdbscan_noise += comp_noise
+        
+        if soft_clustering:
+            comp_clusters = assign_noise_to_nearest(T_sub, comp_clusters)
+        
         # assign offsetted cluster ids to original indices
         valid_mask = comp_clusters >= 0
         clusters[comp_indices[valid_mask]] = comp_clusters[valid_mask] + cluster_offset
-        cluster_offset += comp_clusters.max() + 1 if valid_mask.any() else 0
+        cluster_offset += comp_clusters.max() + 1
 
     total_noise = (clusters == -1).sum()
-    print(
-        f"[spectral] Noise: {total_noise} total, {disconnected_noise} disconnected, {hdbscan_noise} HDBSCAN"
-    )
+    if soft_clustering:
+        print(f"[spectral] Assigned {hdbscan_noise} HDBSCAN noise points to nearest clusters, {total_noise} unassigned (from {disconnected_noise} small components)")
+    else:
+        print(f"[spectral] Noise: {total_noise} total, {disconnected_noise} disconnected, {hdbscan_noise} HDBSCAN")
     return clusters
 
 
@@ -532,7 +556,7 @@ def spectral_cluster_gaussians(gaussians: GaussianModel, cfg: DictConfig):
     ]
     pos_through_time = np.concatenate([i[0] for i in deformed_data], axis=-1)
     lf = deformed_data[0][2]
-    graph, nnd = build_graph(
+    sparse_A, nnd = build_graph(
         positions=pos_through_time,
         normalized_lf=lf,
         k=cfg.graph_extraction.spectral_clustering.knn_graph_k,
@@ -542,16 +566,17 @@ def spectral_cluster_gaussians(gaussians: GaussianModel, cfg: DictConfig):
         sigma_lf_factor=cfg.graph_extraction.spectral_clustering.rbf_sigma_lf_factor,
     )
     clusters = ng_jordan_weiss_spectral_clustering(
-        graph,
+        sparse_A,
         spectral_embedding_dim=cfg.graph_extraction.spectral_clustering.spectral_embedding_dim,
         hdbscan_args=cfg.graph_extraction.spectral_clustering.hdbscan_args,
+        soft_clustering=cfg.graph_extraction.spectral_clustering.soft_clustering,
     )
 
-    # # Assign noise points to nearest clustered neighbor via extended k-NN query
+    # # Assign remaining unassigned points (from small disconnected components) via k-NN
     # noise_mask = clusters == -1
     # n_noise = noise_mask.sum()
     # if n_noise > 0:
-    #     print(f"[spectral] Assigning {n_noise} noise points to nearest clusters...")
+    #     print(f"[spectral] Assigning {n_noise} unassigned points (small components) via k-NN...")
         
     #     noise_positions = pos_through_time[noise_mask]
     #     query_k = min(cfg.graph_extraction.spectral_clustering.noise_assignment_k, pos_through_time.shape[0] - 1)
@@ -568,9 +593,7 @@ def spectral_cluster_gaussians(gaussians: GaussianModel, cfg: DictConfig):
     #     remaining_noise = (clusters == -1).sum()
     #     print(f"[spectral] {remaining_noise} points still unassigned")
 
-    # print(
-    #     f"[spectral] total clusters: {len(np.unique(clusters[clusters >= 0]))} (excluding noise)"
-    # )
+    print(f"[spectral] total clusters: {len(np.unique(clusters[clusters >= 0]))}")
     return clusters
 
 
