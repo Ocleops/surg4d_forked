@@ -17,6 +17,8 @@ from omegaconf import DictConfig
 from tqdm import tqdm
 import gc
 import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
+from mpl_toolkits.mplot3d import Axes3D
 
 from utils.params_utils import merge_hparams
 from arguments import ModelParams, PipelineParams, ModelHiddenParams
@@ -778,6 +780,34 @@ def hdbscan_cluster_gaussians(
     return clusters
 
 
+def full_hdbscan_cluster_gaussians(gaussians: GaussianModel, cfg: DictConfig):
+    deformed_data = [
+        deform_at_timestep(gaussians, t)
+        for t in np.linspace(
+            0,
+            1,
+            cfg.graph_extraction.full_hdbscan_clustering.timesteps,
+            dtype=np.float32,
+        )
+    ]
+    pos_through_time = np.concatenate([i[0] for i in deformed_data], axis=-1)
+    lf_through_times = np.concatenate([i[2] for i in deformed_data], axis=-1)
+    weight_pos = cfg.graph_extraction.full_hdbscan_clustering.weight_pos
+    weight_lf = cfg.graph_extraction.full_hdbscan_clustering.weight_lf
+    samples = np.concatenate([pos_through_time * weight_pos, lf_through_times * weight_lf], axis=-1)
+    clusters = hdbscan.HDBSCAN(**cfg.graph_extraction.full_hdbscan_clustering.hdbscan_args).fit_predict(samples)
+    hdbscan_noise = (clusters == -1).sum()
+
+    if cfg.graph_extraction.full_hdbscan_clustering.soft_clustering:
+        clusters = assign_noise_to_nearest(samples, clusters)
+        print(f"[full_hdbscan] Assigned {hdbscan_noise} noise points to nearest clusters")
+    else:
+        print(f"[full_hdbscan] Noise: {hdbscan_noise} total, 0 disconnected, {hdbscan_noise} HDBSCAN")
+
+    print(f"[full_hdbscan] total clusters: {len(np.unique(clusters[clusters >= 0]))}")
+    return clusters
+
+
 def spectral_cluster_gaussians(gaussians: GaussianModel, cfg: DictConfig):
     deformed_data = [
         deform_at_timestep(gaussians, t)
@@ -805,27 +835,13 @@ def spectral_cluster_gaussians(gaussians: GaussianModel, cfg: DictConfig):
         hdbscan_args=cfg.graph_extraction.spectral_clustering.hdbscan_args,
         soft_clustering=cfg.graph_extraction.spectral_clustering.soft_clustering,
     )
+    hdbscan_noise = (clusters == -1).sum()
 
-    # # Assign remaining unassigned points (from small disconnected components) via k-NN
-    # noise_mask = clusters == -1
-    # n_noise = noise_mask.sum()
-    # if n_noise > 0:
-    #     print(f"[spectral] Assigning {n_noise} unassigned points (small components) via k-NN...")
-
-    #     noise_positions = pos_through_time[noise_mask]
-    #     query_k = min(cfg.graph_extraction.spectral_clustering.noise_assignment_k, pos_through_time.shape[0] - 1)
-    #     neighbor_indices, _ = nnd.query(noise_positions.astype(np.float32), k=query_k)
-
-    #     noise_indices = np.where(noise_mask)[0]
-    #     for i, noise_idx in enumerate(noise_indices):
-    #         for j in range(query_k):
-    #             neighbor = neighbor_indices[i, j]
-    #             if clusters[neighbor] >= 0:
-    #                 clusters[noise_idx] = clusters[neighbor]
-    #                 break
-
-    #     remaining_noise = (clusters == -1).sum()
-    #     print(f"[spectral] {remaining_noise} points still unassigned")
+    if cfg.graph_extraction.spectral_clustering.soft_clustering:
+        clusters = assign_noise_to_nearest(pos_through_time, clusters)
+        print(f"[spectral] Assigned {hdbscan_noise} noise points to nearest clusters")
+    else:
+        print(f"[spectral] Noise: {hdbscan_noise} total, 0 disconnected, {hdbscan_noise} HDBSCAN")
 
     print(f"[spectral] total clusters: {len(np.unique(clusters[clusters >= 0]))}")
     return clusters
@@ -991,6 +1007,97 @@ def timestep_graph(positions, clusters, cfg: DictConfig):
     return A, bhattacharyya_coeffs
 
 
+def visualize_cluster_latent_distributions(
+    clusters: np.ndarray,
+    lf_patch_through_time: np.ndarray,
+    output_dir: Path,
+    timestep_idx: int = 0,
+):
+    """Create 3D PCA visualizations of latent features for each cluster.
+    
+    Args:
+        clusters: (n_gaussians,) cluster assignments
+        lf_patch_through_time: (T, n_gaussians, lang_dim) latent features
+        output_dir: Directory to save visualizations
+        timestep_idx: Which timestep to visualize (default: 0)
+    """
+    vis_dir = output_dir / "cluster_latent_vis"
+    vis_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Get latent features at specified timestep
+    lf = lf_patch_through_time[timestep_idx]  # (n_gaussians, lang_dim)
+    
+    unique_clusters = np.unique(clusters[clusters >= 0])
+    logger.info(f"Visualizing latent distributions for {len(unique_clusters)} clusters...")
+    
+    # Fit global PCA on all features for consistent projection
+    pca_global = PCA(n_components=3)
+    pca_global.fit(lf)
+    
+    for cluster_id in unique_clusters:
+        mask = clusters == cluster_id
+        cluster_lf = lf[mask]  # (n_cluster_gaussians, lang_dim)
+        
+        if len(cluster_lf) < 4:
+            continue
+        
+        # Project to 3D using global PCA
+        lf_3d = pca_global.transform(cluster_lf)
+        
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111, projection='3d')
+        
+        scatter = ax.scatter(
+            lf_3d[:, 0], lf_3d[:, 1], lf_3d[:, 2],
+            c=np.arange(len(lf_3d)),
+            cmap='viridis',
+            alpha=0.6,
+            s=20,
+        )
+        
+        ax.set_xlabel('PC1')
+        ax.set_ylabel('PC2')
+        ax.set_zlabel('PC3')
+        ax.set_title(f'Cluster {cluster_id} Latent Distribution (n={len(cluster_lf)})')
+        
+        plt.colorbar(scatter, label='Gaussian Index', shrink=0.6)
+        plt.tight_layout()
+        plt.savefig(vis_dir / f"cluster_{cluster_id:03d}_latents.png", dpi=150)
+        plt.close(fig)
+    
+    # Also create combined visualization with all clusters
+    fig = plt.figure(figsize=(12, 10))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    colors = plt.cm.tab20(np.linspace(0, 1, len(unique_clusters)))
+    
+    for i, cluster_id in enumerate(unique_clusters):
+        mask = clusters == cluster_id
+        cluster_lf = lf[mask]
+        if len(cluster_lf) < 4:
+            continue
+        lf_3d = pca_global.transform(cluster_lf)
+        ax.scatter(
+            lf_3d[:, 0], lf_3d[:, 1], lf_3d[:, 2],
+            c=[colors[i % len(colors)]],
+            alpha=0.4,
+            s=10,
+            label=f'C{cluster_id}' if i < 20 else None,
+        )
+    
+    ax.set_xlabel('PC1')
+    ax.set_ylabel('PC2')
+    ax.set_zlabel('PC3')
+    ax.set_title(f'All Clusters Latent Distribution (PCA, t={timestep_idx})')
+    if len(unique_clusters) <= 20:
+        ax.legend(loc='upper left', fontsize=8)
+    plt.tight_layout()
+    plt.savefig(vis_dir / "all_clusters_latents.png", dpi=150)
+    plt.close(fig)
+    
+    logger.info(f"Saved latent visualizations to {vis_dir}")
+
+
 def extract_graph(clip: DictConfig, cfg: DictConfig):
     """Extract scene graph from trained Gaussian Splatting model.
 
@@ -1022,11 +1129,13 @@ def extract_graph(clip: DictConfig, cfg: DictConfig):
     graph_output_dir = Path(model_path) / cfg.graph_extraction.graph_output_subdir
     graph_output_dir.mkdir(parents=True, exist_ok=True)
 
-    assert cfg.graph_extraction.cluster_method in ["spectral", "precomputed", "hdbscan"]
+    assert cfg.graph_extraction.cluster_method in ["spectral", "precomputed", "hdbscan", "full_hdbscan"]
     if cfg.graph_extraction.cluster_method == "spectral":
         clusters = spectral_cluster_gaussians(gaussians, cfg=cfg)
     if cfg.graph_extraction.cluster_method == "precomputed":
         clusters = load_precomputed_instance_clusters(clip, cfg)
+    if cfg.graph_extraction.cluster_method == "full_hdbscan":
+        clusters = full_hdbscan_cluster_gaussians(gaussians, cfg=cfg)
     if cfg.graph_extraction.cluster_method == "hdbscan":
         clusters = hdbscan_cluster_gaussians(
             gaussians, cfg=cfg, histogram_output_dir=graph_output_dir
@@ -1103,6 +1212,15 @@ def extract_graph(clip: DictConfig, cfg: DictConfig):
     np.save(
         out / "patch_latents_through_time.npy", lf_patch_through_time
     )  # patch latents through time (timesteps, n_filtered_gaussians, lang_dim)
+
+    # matplotlib 3D latent feature visualizations
+    logger.info(f"Creating cluster latent visualizations...")
+    visualize_cluster_latent_distributions(
+        clusters=clusters,
+        lf_patch_through_time=lf_patch_through_time,
+        output_dir=out,
+        timestep_idx=0,
+    )
 
     # rerun visualization
     logger.info(f"Visualizing to rerun...")

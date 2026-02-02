@@ -192,6 +192,7 @@ def get_patched_qwen3(
     device_map: Union[str, Dict[str, str]] = "auto",
     max_memory: Optional[Dict[str, str]] = None,
     repetition_penalty: float = None,
+    compile: bool = False,
 ):
     """Get a patched Qwen3VL model/processor that supports raw patch features.
 
@@ -199,7 +200,6 @@ def get_patched_qwen3(
     Parameters allow enabling weight quantization and optimized attention without editing Transformers.
     """
     model_path = "Qwen/Qwen3-VL-8B-Thinking"
-    # model_path = "Qwen/Qwen3-VL-32B-Thinking"
 
     quantization_config = None
     if use_bnb_4bit:
@@ -234,6 +234,8 @@ def get_patched_qwen3(
     if repetition_penalty is not None:
         model.generation_config.repetition_penalty = repetition_penalty
     model.eval()
+    if compile:
+        model = torch.compile(model, mode="reduce-overhead")
     return model, processor
 
 
@@ -341,7 +343,7 @@ def ask_qwen_about_image(
     model: Qwen2_5_VLForConditionalGeneration,
     processor: Qwen2_5_VLProcessor,
     system_prompt: str = "You are a medical assistant designed to aid medical practitioners during a cholecystectomy procedure. The surgeon user will ask you a question and show you their current situation, and you give a concise answer.",
-    max_tokens: int = 5012,
+    max_tokens: int = 8192,
     seed: int = 42,
 ):
     messages = [
@@ -406,7 +408,7 @@ def ask_qwen_about_image_features(
     model: Qwen2_5_VLForConditionalGeneration,
     processor: Qwen2_5_VLProcessor,
     system_prompt: str = "You are a medical assistant designed to aid medical practitioners during a cholecystectomy procedure. The surgeon user will ask you a question and show you their current situation, and you give a concise answer.",
-    max_tokens: int = 5012,
+    max_tokens: int = 8192,
     seed: int = 42,
     qwen_version: str = "qwen25",
 ):
@@ -481,7 +483,7 @@ def generate_with_vision_features(
     model: Union[Qwen2_5_VLForConditionalGeneration, Qwen3VLForConditionalGeneration],
     processor: Union[Qwen2_5_VLProcessor, Qwen3VLProcessor],
     qwen_version: str = "qwen25",
-    max_tokens: int = 5012,
+    max_tokens: int = 8192,
     seed: int = 42,
 ):
     """Generate text from vision features.
@@ -750,7 +752,7 @@ def generate_with_vision_features_agentic(
     processor: Union[Qwen2_5_VLProcessor, Qwen3VLProcessor],
     tools: Dict[str, Tuple[Callable, Dict[str, Any]]],
     qwen_version: str = "qwen3",
-    max_tokens: int = 5012,
+    max_tokens: int = 8192,
     max_iterations: int = 10,
     tool_call_limits: Optional[Dict[str, Optional[int]]] = None,
     verbose: bool = False,
@@ -792,7 +794,12 @@ def generate_with_vision_features_agentic(
                 - "tool_name" (str): Name of the tool called
                 - "arguments" (dict): Arguments passed to the tool
                 - "result" (Any): Result returned by the tool (or error message string)
+            - "tok_per_sec" (float): Tokens generated per second across all iterations.
+            - "total_generation_time" (float): Total time spent in model.generate() calls (seconds).
+            - "total_time" (float): Total wall time for the entire agentic loop (seconds).
     """
+    fn_start_time = time.time()
+
     assert qwen_version == "qwen3", (
         "qwen3 is the only supported version for agentic mode"
     )
@@ -827,6 +834,10 @@ def generate_with_vision_features_agentic(
     # Keep in concatenated format, convert to deepstack before each generation
     all_vision_features = list(vision_features)
 
+    # Track generation timing and tokens for tok/s calculation
+    total_generation_time = 0.0
+    total_generated_tokens = 0
+
     for iteration in range(max_iterations):
         if verbose:
             timestamp = time.strftime("%H:%M:%S")
@@ -848,12 +859,15 @@ def generate_with_vision_features_agentic(
 
         try:
             _set_generation_seed(seed + iteration)
+            gen_start_time = time.time()
             generated_ids = model.generate(
                 **inputs,
                 max_new_tokens=max_tokens,
                 custom_patch_features=main_features,
                 custom_deepstack_features=deepstack_features,
             )
+            gen_end_time = time.time()
+            total_generation_time += gen_end_time - gen_start_time
         except Exception:
             # Print message trace for any exception during generation
             trace_output = _format_message_trace_for_debug(
@@ -867,6 +881,7 @@ def generate_with_vision_features_agentic(
             out_ids[len(in_ids) :]
             for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
         ]
+        total_generated_tokens += sum(len(ids) for ids in generated_ids_trimmed)
         response = processor.batch_decode(
             generated_ids_trimmed,
             skip_special_tokens=True,
@@ -887,10 +902,15 @@ def generate_with_vision_features_agentic(
                 {"role": "assistant", "content": [{"type": "text", "text": response}]}
             )
             final_answer = _extract_final_answer(response)
+            tok_per_sec = total_generated_tokens / total_generation_time if total_generation_time > 0 else 0.0
+            total_time = time.time() - fn_start_time
             return {
                 "final_answer": final_answer,
                 "message_history": current_messages,
                 "tool_calls": tool_call_history,
+                "tok_per_sec": tok_per_sec,
+                "total_generation_time": total_generation_time,
+                "total_time": total_time,
             }
 
         # Add assistant message with the response
@@ -979,10 +999,15 @@ def generate_with_vision_features_agentic(
 
     # Max iterations reached - try to extract any answer from the last response
     final_answer = _extract_final_answer(response)
+    tok_per_sec = total_generated_tokens / total_generation_time if total_generation_time > 0 else 0.0
+    total_time = time.time() - fn_start_time
     return {
         "final_answer": final_answer,
         "message_history": current_messages,
         "tool_calls": tool_call_history,
+        "tok_per_sec": tok_per_sec,
+        "total_generation_time": total_generation_time,
+        "total_time": total_time,
     }
 
 
@@ -1102,7 +1127,7 @@ def prompt_with_graph_at_timestep(
         model=model,
         processor=processor,
         qwen_version=qwen_version,
-        max_tokens=5012,
+        max_tokens=8192,
         seed=seed,
     )
 
@@ -1224,7 +1249,7 @@ def prompt_graph_agent(
         processor=processor,
         tools=tools,
         qwen_version=qwen_version,
-        max_tokens=5012,
+        max_tokens=8192,
         max_iterations=max_iterations,
         tool_call_limits=tool_call_limits,
         verbose=verbose,
@@ -1368,7 +1393,7 @@ def prompt_with_static_graph(
         model=model,
         processor=processor,
         qwen_version=qwen_version,
-        max_tokens=5012,
+        max_tokens=8192,
         seed=seed,
     )
 
@@ -1499,7 +1524,7 @@ def prompt_with_dynamic_graph(
         model=model,
         processor=processor,
         qwen_version=qwen_version,
-        max_tokens=5012,
+        max_tokens=8192,
         seed=seed,
     )
 
@@ -1560,7 +1585,7 @@ def prompt_with_descriptors_at_timestep(
         model=model,
         processor=processor,
         qwen_version=qwen_version,
-        max_tokens=5012,
+        max_tokens=8192,
         seed=seed,
     )
 
@@ -1642,7 +1667,7 @@ def prompt_with_dynamic_descriptors(
         model=model,
         processor=processor,
         qwen_version=qwen_version,
-        max_tokens=5012,
+        max_tokens=8192,
         seed=seed,
     )
 
@@ -1654,7 +1679,7 @@ def prompt_with_video_frames(
     processor: Union[Qwen2_5_VLProcessor, Qwen3VLProcessor],
     qwen_version: str = "qwen3",
     system_prompt: str = None,
-    max_tokens: int = 5012,
+    max_tokens: int = 8192,
     fps: float = None,
     seed: int = 42,
 ) -> str:

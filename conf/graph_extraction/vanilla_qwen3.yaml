@@ -1,4 +1,4 @@
-graph_output_subdir: graph
+graph_output_subdir: graph_exp
 
 # gaussian model params
 language_feature_hiddendim: ${splat.language_feature_hiddendim}
@@ -23,13 +23,21 @@ global_autoencoder_checkpoint_dir: ${autoencoder.global_checkpoint_dir}
 precluster_opacity_threshold: 0.05
 
 # clustering
-cluster_method: hdbscan # one of: [spectral, precomputed, hdbscan]
+cluster_method: spectral # one of: [spectral, precomputed, hdbscan, full_hdbscan]
+
+full_hdbscan_clustering:
+  soft_clustering: true
+  hdbscan_args:
+    min_cluster_size: 150
+    min_samples: 150
+  timesteps: 3
+  weight_pos: 1.0
+  weight_lf: 1.0
 
 # spectral clustering
 spectral_clustering:
   knn_graph_k: 20
   spectral_embedding_dim: 5
-  noise_assignment_k: 256
   soft_clustering: true
   hdbscan_args:
     min_cluster_size: 300
@@ -38,14 +46,14 @@ spectral_clustering:
   weight_pos: 1.0
   weight_lf: 5.0
   rbf_sigma_pos_factor: 1.0
-  rbf_sigma_lf_factor: 2.0
+  rbf_sigma_lf_factor: 1.0
 
 hdbscan_clustering:
-  knn_graph_k: 30
+  knn_graph_k: 10
   soft_clustering: true
   hdbscan_args:
     min_cluster_size: 300
-    min_samples: 30
+    min_samples: 10
   pos_timesteps: 10
   weight_pos: 1.0
   weight_lf: 5.0
