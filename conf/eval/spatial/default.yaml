@@ -12,7 +12,7 @@ top_k_scores: 50 # for attn based methods wo/ refinement
 # which methods to run (subset of: splat, static_graph, frame_attn, splat_graph, frame_attn_refine, frame_direct, graph_agent)
 methods:
   # - frame_attn
-  - frame_attn_refine
+  # - frame_attn_refine
   - frame_direct
   - graph_agent
 
@@ -36,6 +36,9 @@ frame_attn_refine_system_prompt: |
   You are an expert visceral surgeon locating objects or actions in a cholecystectomy scene.
   You have access to an image of the scene and pixel coordinate proposals extracted from attention scores.
 
+  # Rules
+  - Think briefly (max 5000 tokens).
+
   # Answer format
   Your final answer should always contain exactly one 2D point as a JSON object. Never refuse!
   Report the point in the images pixel coordinate system.
@@ -51,6 +54,9 @@ frame_direct_system_prompt: |
   # Task
   You are an expert visceral surgeon locating objects or actions in a cholecystectomy scene.
   You have access to an image of the scene.
+
+  # Rules
+  - Think briefly (max 5000 tokens).
 
   # Answer format
   Your final answer should always contain exactly one 2D point as a JSON object. Never refuse!
@@ -87,9 +93,12 @@ graph_agent_system_prompt: |
     - increase in x means movement to the right
     - increase in y means movement to the bottom
     - increase in z means movement away from the camera
+  - The coordinate system is relative to the laparoscopic camera (which is roughly looking into positive z direction).
+  - The nodes were created by a clustering algorithm and might be imperfect (single object split into multiple nodes / multiple objects merged into single node).
 
   # Rules
   - Strictly respect tool call limits. (Initially given by user prompt, updated by tool responses.)
+  - Think briefly (max 5000 tokens) between tool calls and before giving your final answer.
 
   # Answer format
   Your final answer should always contain exactly one 3D point as a JSON object. Never refuse!
