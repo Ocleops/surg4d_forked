@@ -927,7 +927,8 @@ def clusterwise_qwen_feats(
     ae: QwenAutoencoder,
     clusters: np.ndarray,
     cfg: DictConfig,
-    patch_lf: np.ndarray = None,
+    patch_lf_through_time: np.ndarray,
+    instance_lf_through_time: np.ndarray = None,
 ) -> dict[int, np.ndarray]:
     """Extract qwen features from each cluster by sub-clustering its Qwen features.
 
@@ -938,26 +939,49 @@ def clusterwise_qwen_feats(
         patch_lf (np.ndarray): Language features to use. If None, use static features from gaussians.
 
     Returns:
-        Dict[int, np.ndarray]: map of cluster id to torch tensor of shape (n_feats, 3584)
+        Dict[int, np.ndarray]: dict str(cluster id) -> tensor(T, n_feats, full_dim)
+        or tuple of those dicts for patch and instance features
     """
-    cluster_feats = {}
-    for cluster_id in np.unique(clusters):
-        cluster_mask = clusters == cluster_id
-        cluster_lfs = patch_lf[cluster_mask]
+    cluster_to_patch_through_time = {}
+    cluster_to_instance_through_time = {}
 
+    for cid in np.unique(clusters):
+        # get feats for that cluster
+        cmask = clusters == cid
+        cluster_patch_lf = patch_lf_through_time[:, cmask]
+        if instance_lf_through_time is not None:
+            cluster_instance_lf = instance_lf_through_time[:, cmask]
+
+        # pick random gaussians for that cluster
         indices = np.random.choice(
-            np.arange(cluster_lfs.shape[0]),
-            min(cluster_lfs.shape[0], cfg.graph_extraction.features_per_cluster),
+            np.arange(cluster_patch_lf.shape[1]),
+            min(cluster_patch_lf.shape[1], cfg.graph_extraction.features_per_cluster),
             replace=True,
         )
-        feats = decode_qwen(
+        cluster_patch_lf = cluster_patch_lf[:, indices]
+        if instance_lf_through_time is not None:
+            cluster_instance_lf = cluster_instance_lf[:, indices]
+
+        # decode them
+        flat_cluster_patch_lf = cluster_patch_lf.reshape(-1, cluster_patch_lf.shape[-1])
+        decoded_flat_cluster_patch_lf = decode_qwen(
             ae,
-            torch.tensor(cluster_lfs[indices], device="cuda", dtype=torch.float32),
+            torch.tensor(flat_cluster_patch_lf, device="cuda", dtype=torch.float32),
             cfg,
         )
-        cluster_feats[cluster_id] = feats
+        decoded_cluster_patch_lf = decoded_flat_cluster_patch_lf.reshape(cluster_patch_lf.shape[0], -1, decoded_flat_cluster_patch_lf.shape[-1])
+        cluster_to_patch_through_time[str(cid)] = decoded_cluster_patch_lf
+        if instance_lf_through_time is not None:
+            flat_cluster_instance_lf = cluster_instance_lf.reshape(-1, cluster_instance_lf.shape[-1])
+            decoded_flat_cluster_instance_lf = decode_qwen(
+                ae,
+                torch.tensor(flat_cluster_instance_lf, device="cuda", dtype=torch.float32),
+                cfg,
+            )
+            decoded_cluster_instance_lf = decoded_flat_cluster_instance_lf.reshape(cluster_instance_lf.shape[0], -1, decoded_flat_cluster_instance_lf.shape[-1])
+            cluster_to_instance_through_time[str(cid)] = decoded_cluster_instance_lf
 
-    return cluster_feats
+    return cluster_to_patch_through_time if instance_lf_through_time is None else (cluster_to_patch_through_time, cluster_to_instance_through_time)
 
 
 def properties_through_time(positions_through_time: np.ndarray, clusters: np.ndarray):
@@ -1162,15 +1186,13 @@ def extract_graph(clip: DictConfig, cfg: DictConfig):
 
     # cluster qwen features
     logger.info(f"Decoding Qwen features...")
-    selected_decoded_lf_through_time = [
-        clusterwise_qwen_feats(
-            ae,
-            clusters,
-            cfg,
-            patch_lf=lf_patch_through_time[t_idx],
-        )
-        for t_idx in range(len(timesteps))
-    ]
+    cluster_feats_dict_patch, cluster_feats_dict_instance = clusterwise_qwen_feats(
+        ae,
+        clusters,
+        cfg,
+        patch_lf_through_time=lf_patch_through_time,
+        instance_lf_through_time=lf_instance_through_time,
+    )
 
     # graph structure
     logger.info(f"Building graphs...")
@@ -1184,14 +1206,12 @@ def extract_graph(clip: DictConfig, cfg: DictConfig):
     # save outputs
     logger.info(f"Saving outputs...")
     out = graph_output_dir
-    cluster_feats_dict = {}
-    for cluster_id in selected_decoded_lf_through_time[0].keys():
-        cluster_feats_dict[str(cluster_id)] = np.stack(
-            [lf_dict[cluster_id] for lf_dict in selected_decoded_lf_through_time]
-        )
     np.savez(
-        out / "c_qwen_feats.npz", **cluster_feats_dict
+        out / "c_qwen_feats.npz", **cluster_feats_dict_patch
     )  # qwen features per cluster through time (cluster_id -> (timesteps, n_feats, 3584))
+    np.savez(
+        out / "c_qwen_feats_instance.npz", **cluster_feats_dict_instance
+    )  # qwen instance features per cluster through time (cluster_id -> (timesteps, n_feats, 3584))
     np.save(
         out / "c_centroids.npy", cluster_pos_through_time
     )  # cluster centroids through time (timesteps, n_clusters, 3)
