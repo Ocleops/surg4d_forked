@@ -7,15 +7,11 @@ from tqdm import tqdm
 import hydra
 import numpy as np
 import torch
-from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
-from llm.qwen_utils import get_patched_qwen
 
-from benchmark.benchmark_config import BenchmarkConfig
+from llm.qwen_utils import get_patched_qwen3
 from benchmark.temporal import (
     load_video_frames,
     multiframe_queries,
-    multiframe_graph_queries,
-    multiframe_descriptors_queries,
     graph_agent_queries,
 )
 from benchmark.spatial import (
@@ -27,55 +23,11 @@ from benchmark.spatial import (
     graph_agent_feat_queries,
 )
 
-
-def _build_benchmark_config(cfg: DictConfig, clip: DictConfig) -> BenchmarkConfig:
-    # Infer qwen version and quantization from feature_extraction group if present
-    use_4bit = bool(cfg.get("feature_extraction", {}).get("bnb_4bit", False))
-
-    # Paths
-    cholect50_root = Path(cfg.cholect50_root)
-    preprocessed_root = Path(cfg.preprocessed_root)
-    output_root = Path(cfg.output_root)
-
-    clip_name = str(clip.name)
-    video_dir = preprocessed_root / clip_name
-
-    graph_dir = output_root / clip_name / cfg.eval.paths.graph_subdir
-
-    # Convert nested eval configs (OmegaConf) to plain dicts
-    triplets_cfg = None
-    spatial_cfg = None
-    spatiotemporal_cfg = None
-
-    if cfg.get("eval") is not None:
-        if cfg.eval.get("triplets") is not None:
-            triplets_cfg = OmegaConf.to_container(cfg.eval.triplets, resolve=True)
-        if cfg.eval.get("spatial") is not None:
-            spatial_cfg = OmegaConf.to_container(cfg.eval.spatial, resolve=True)
-
-    bench_cfg = BenchmarkConfig(
-        triplets_config=triplets_cfg,
-        temporal_config=None,
-        spatial_config=spatial_cfg,
-        spatiotemporal_config=spatiotemporal_cfg,
-        cholect50_root=cholect50_root,
-        preprocessed_root=preprocessed_root,
-        output_root=output_root,
-        results_dir=output_root / "benchmark",
-        video_dir=video_dir,
-        graph_dir=graph_dir,
-        images_subdir=cfg.eval.paths.images_subdir,
-        graph_subdir=cfg.eval.paths.graph_subdir,
-        use_4bit_quantization=use_4bit,
-    )
-    return bench_cfg
-
-
 def evaluate_triplets(
     clip: DictConfig,
     cfg: DictConfig,
-    model: Qwen2_5_VLForConditionalGeneration,
-    processor: Qwen2_5_VLProcessor,
+    model,
+    processor,
 ):
     """Run triplet recognition evaluation for a single clip."""
     if cfg.eval is None or cfg.eval.triplets is None:
@@ -200,8 +152,8 @@ def evaluate_triplets(
 def evaluate_temporal(
     clip: DictConfig,
     cfg: DictConfig,
-    model: Qwen2_5_VLForConditionalGeneration,
-    processor: Qwen2_5_VLProcessor,
+    model,
+    processor,
 ):
     """Run temporal action localization evaluation for a single clip."""
     if cfg.eval is None or cfg.eval.temporal is None:
@@ -225,8 +177,6 @@ def evaluate_temporal(
     # Map method names to strategy functions
     method_map = {
         "multiframe": multiframe_queries,
-        "multiframe_graph": multiframe_graph_queries,
-        "multiframe_descriptors": multiframe_descriptors_queries,
         "graph_agent": graph_agent_queries,
     }
     
@@ -289,10 +239,10 @@ def get_timestep_from_frame(frame: str, image_dir: Path) -> int:
 def evaluate_spatial(
     clip: DictConfig,
     cfg: DictConfig,
-    model_spatial: Qwen2_5_VLForConditionalGeneration,
-    processor_spatial: Qwen2_5_VLProcessor,
-    model: Qwen2_5_VLForConditionalGeneration,
-    processor: Qwen2_5_VLProcessor,
+    model_spatial,
+    processor_spatial,
+    model,
+    processor,
 ):
     """Run spatial grounding evaluation using frame-based and graph-based methods.
 
@@ -421,10 +371,9 @@ def main(cfg: DictConfig):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(42)
 
-    model, processor = get_patched_qwen(
-        qwen_version=cfg.eval.qwen_version,
-        use_bnb_4bit=cfg.eval.use_bnb_4bit,
-        use_bnb_8bit=cfg.eval.use_bnb_8bit,
+    model, processor = get_patched_qwen3(
+        size=cfg.eval.qwen3_size,
+        use_fp8=cfg.eval.qwen3_use_fp8,
     )
     
     # Only load spatial attention model if spatial evaluation is enabled
@@ -432,9 +381,8 @@ def main(cfg: DictConfig):
     processor_spatial = None
     if cfg.eval is not None and cfg.eval.spatial is not None:
         model_spatial, processor_spatial = get_patched_qwen_for_spatial_grounding(
-            qwen_version=cfg.eval.qwen_version,
-            use_bnb_4bit=cfg.eval.use_bnb_4bit,
-            use_bnb_8bit=cfg.eval.use_bnb_8bit,
+            size=cfg.eval.qwen3_size,
+            use_fp8=cfg.eval.qwen3_use_fp8,
         )
 
     for clip in tqdm(cfg.clips, desc="Evaluating clips", unit="clip"):

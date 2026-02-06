@@ -1,7 +1,5 @@
-qwen_version: qwen3  # qwen25 or qwen3
-
-bnb_4bit: false
-bnb_8bit: false
+qwen3_size: 32B
+qwen3_use_fp8: false
 
 aggregate_with_instance_masks: true # semantic if not
 

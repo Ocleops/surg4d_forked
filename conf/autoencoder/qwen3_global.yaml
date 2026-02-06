@@ -6,7 +6,7 @@ latent_cat_feat_subdir: qwen_cat_features_dim6_global
 epochs: 400
 lr: 1e-4
 batch_size: 256
-latent_dim: 8
+latent_dim: 64
 # full_dim: 16384  # 4096 * 4 (main + 3 deepstack layers concatenated)
 full_dim: 20480 # this is for the 32B model
 

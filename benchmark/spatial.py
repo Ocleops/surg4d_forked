@@ -12,7 +12,6 @@ import json
 from benchmark.graph_utils import get_coord_transformations
 from benchmark.serialization_utils import sanitize_tool_calls
 from llm.qwen_utils import (
-    get_patched_qwen,
     model_inputs,
     QWEN_CONSTANTS,
     get_patch_hw,
@@ -20,6 +19,7 @@ from llm.qwen_utils import (
     prompt_graph_agent,
     ask_qwen_about_image,
     qwen3_cat_to_deepstack_multiple,
+    get_patched_qwen3,
 )
 from llm.tools import GraphTools
 from autoencoder.model_qwen import QwenAutoencoder
@@ -52,14 +52,12 @@ def find_image_path(images_dir: Path, frame_number: int) -> Optional[Path]:
 
 
 def get_patched_qwen_for_spatial_grounding(
-    qwen_version: str = "qwen25",
-    use_bnb_4bit: bool = False,
-    use_bnb_8bit: bool = False,
+    size: str = "32B",
+    use_fp8: bool = False,
 ):
-    model, processor = get_patched_qwen(
-        qwen_version=qwen_version,
-        use_bnb_4bit=use_bnb_4bit,
-        use_bnb_8bit=use_bnb_8bit,
+    model, processor = get_patched_qwen3(
+        size=size,
+        use_fp8=use_fp8,
         attn_implementation="eager",
     )
 

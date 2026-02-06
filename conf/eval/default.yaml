@@ -6,8 +6,9 @@ defaults:
 
 triplets: null
 
-# Qwen version for evaluation (should match feature_extraction.qwen_version)
-qwen_version: ${feature_extraction.qwen_version}
+# qwen
+qwen3_size: ${feature_extraction.qwen3_size}
+qwen3_use_fp8: ${feature_extraction.qwen3_use_fp8}
 
 # Video metadata for all evaluations
 video_fps: 25  # Original video framerate (Cholec80 is 25 fps)

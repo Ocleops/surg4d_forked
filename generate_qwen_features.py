@@ -7,7 +7,7 @@ import numpy as np
 from omegaconf import DictConfig
 from tqdm import tqdm
 
-from llm.qwen_utils import get_patched_qwen, qwen_encode_image, get_patch_segmasks
+from llm.qwen_utils import get_patched_qwen3, qwen_encode_image, get_patch_segmasks
 
 
 def extract_qwen_features(
@@ -38,9 +38,9 @@ def extract_qwen_features(
         image = Image.open(img_dir / f"{frame_stem}{ext}")
         frame_stem_just_number = frame_stem.replace("frame_", "")
 
-        feats = qwen_encode_image(image, model, processor, qwen_version)
+        feats = qwen_encode_image(image, model, processor)
         qwen_feats = feats.detach().float().cpu().numpy()
-        patch_map = get_patch_segmasks(image.height, image.width, qwen_version).unsqueeze(0).numpy()
+        patch_map = get_patch_segmasks(image.height, image.width).unsqueeze(0).numpy()
 
         np.save(patch_dir / f"{frame_stem_just_number}_f.npy", qwen_feats)
         np.save(patch_dir / f"{frame_stem_just_number}_s.npy", patch_map)
@@ -80,10 +80,9 @@ def main(cfg: DictConfig):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(42)
 
-    model, processor = get_patched_qwen(
-        qwen_version=cfg.feature_extraction.qwen_version,
-        use_bnb_4bit=cfg.feature_extraction.bnb_4bit,
-        use_bnb_8bit=cfg.feature_extraction.bnb_8bit,
+    model, processor = get_patched_qwen3(
+        size=cfg.feature_extraction.qwen3_size,
+        use_fp8=cfg.feature_extraction.qwen3_use_fp8,
     )
 
     for clip in tqdm(cfg.clips, desc=f"Generating {cfg.feature_extraction.qwen_version} feats", unit="clip"):
