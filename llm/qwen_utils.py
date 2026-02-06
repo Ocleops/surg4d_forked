@@ -14,9 +14,8 @@ from transformers import (
 from transformers.generation import LogitsProcessorList
 from transformers.models.qwen2_vl.image_processing_qwen2_vl import smart_resize
 from transformers.video_utils import VideoMetadata
-from typing import Dict, List, Optional, Union, Any, Callable, Tuple
+from typing import Dict, List, Literal, Optional, Union, Any, Callable, Tuple
 from functools import lru_cache
-from transformers.utils.quantization_config import BitsAndBytesConfig
 from qwen_vl_utils import process_vision_info
 
 from .patched_qwen import (
@@ -134,8 +133,8 @@ def qwen3_cat_to_deepstack_multiple(
 
 
 def get_patched_qwen3(
-    use_bnb_4bit: bool = False,
-    use_bnb_8bit: bool = False,
+    size: Literal["8B", "32B"] = "8B",
+    use_fp8: bool = False,
     attn_implementation: str = "sdpa",  # "flash_attention_2" or "sdpa"
     torch_dtype: torch.dtype = torch.bfloat16,
     device_map: Union[str, Dict[str, str]] = "auto",
@@ -148,19 +147,9 @@ def get_patched_qwen3(
     Uses inheritance-based patching via __class__ swapping after from_pretrained.
     Parameters allow enabling weight quantization and optimized attention without editing Transformers.
     """
-    # model_path = "Qwen/Qwen3-VL-8B-Thinking"
-    model_path = "Qwen/Qwen3-VL-32B-Thinking"
-
-    quantization_config = None
-    if use_bnb_4bit:
-        quantization_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=torch_dtype,
-        )
-    elif use_bnb_8bit:
-        quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+    model_path = f"Qwen/Qwen3-VL-{size.upper()}-Thinking"
+    if use_fp8:
+        model_path = model_path + "-FP8"
 
     fp_kwargs: Dict[str, Any] = {
         "dtype": torch_dtype,
@@ -168,8 +157,6 @@ def get_patched_qwen3(
         "low_cpu_mem_usage": True,
         "attn_implementation": attn_implementation,
     }
-    if quantization_config is not None:
-        fp_kwargs["quantization_config"] = quantization_config
     if max_memory is not None:
         fp_kwargs["max_memory"] = max_memory
 
@@ -311,6 +298,7 @@ def ask_qwen_about_image_features(
     seed: int = 42,
     max_new_tokens: int = NEW_TOKEN_LIMIT,
     max_thinking_tokens: Optional[int] = THINKING_TOKEN_LIMIT,
+    zero_positional_encodings: bool = False,
 ):
     messages = [
         {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
@@ -330,6 +318,7 @@ def ask_qwen_about_image_features(
         max_new_tokens=max_new_tokens,
         seed=seed,
         max_thinking_tokens=max_thinking_tokens,
+        zero_positional_encodings=zero_positional_encodings,
     )
 
 
@@ -390,6 +379,7 @@ def generate_with_vision_features(
     seed: int = 42,
     max_new_tokens: int = NEW_TOKEN_LIMIT,
     max_thinking_tokens: Optional[int] = THINKING_TOKEN_LIMIT,
+    zero_positional_encodings: bool = False,
 ):
     """Generate text from vision features.
 
@@ -403,7 +393,7 @@ def generate_with_vision_features(
         seed: Random seed for deterministic sampling
         max_thinking_tokens: Maximum tokens for thinking phase (Qwen3 only).
             If None, no limit is applied. If 0, thinking is disabled immediately.
-
+        zero_positional_encodings: Whether to zero out h and w for positional encodings
     Returns:
         Generated text response
     """
@@ -427,6 +417,7 @@ def generate_with_vision_features(
         "max_new_tokens": max_new_tokens,
         "custom_patch_features": main_features,
         "custom_deepstack_features": deepstack_features,
+        "zero_image_hw": zero_positional_encodings,
     }
     if logits_processor is not None:
         generate_kwargs["logits_processor"] = logits_processor
@@ -658,6 +649,7 @@ def generate_with_vision_features_agentic(
     seed: int = 42,
     max_new_tokens: int = NEW_TOKEN_LIMIT,
     max_thinking_tokens: Optional[int] = THINKING_TOKEN_LIMIT,
+    zero_positional_encodings: bool = False,
 ) -> Dict[str, Any]:
     """Generate with vision features in an agentic loop, executing tools until done.
 
@@ -686,6 +678,7 @@ def generate_with_vision_features_agentic(
         max_thinking_tokens: Maximum tokens for thinking phase per iteration (Qwen3 only).
             If None, no limit is applied. If 0, thinking is disabled immediately.
             A new processor is created each iteration since it has internal state.
+        zero_positional_encodings: Whether to zero out h and w for positional encodings
     Returns:
         Dict with keys:
             - "final_answer" (str): The extracted final answer from the model's last response.
@@ -769,6 +762,7 @@ def generate_with_vision_features_agentic(
                 "max_new_tokens": max_new_tokens,
                 "custom_patch_features": main_features,
                 "custom_deepstack_features": deepstack_features,
+                "zero_image_hw": zero_positional_encodings,
             }
             if logits_processor is not None:
                 generate_kwargs["logits_processor"] = logits_processor
@@ -957,6 +951,7 @@ def prompt_graph_agent(
     seed: int = 42,
     max_new_tokens: int = 8192,
     max_thinking_tokens: Optional[int] = None,
+    zero_positional_encodings: bool = False,
 ):
     """
     node_feats: np.lib.npyio.NpzFile - npz file containing node features for each timestep
@@ -973,6 +968,7 @@ def prompt_graph_agent(
     max_new_tokens: int - maximum number of new tokens to generate
     max_thinking_tokens: int - maximum tokens for thinking phase per iteration (Qwen3 only).
         If None, no limit is applied. If 0, thinking is disabled immediately.
+    zero_positional_encodings: Whether to zero out h and w for positional encodings
     """
     assert tools is not None and len(tools) > 0, (
         "tools are required for graph agentic prompting"
@@ -1067,6 +1063,7 @@ def prompt_graph_agent(
         seed=seed,
         max_new_tokens=max_new_tokens,
         max_thinking_tokens=max_thinking_tokens,
+        zero_positional_encodings=zero_positional_encodings,
     )
 
 

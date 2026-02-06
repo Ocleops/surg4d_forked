@@ -26,6 +26,7 @@ class PatchedQwen3VLModel(Qwen3VLModel):
         custom_deepstack_features: List of 3 tensors for deepstack injection, each (total_visual_tokens, hidden_dim)
     """
 
+    # Override forward to support custom_patch_features and custom_deepstack_features, and zero_image_hw flag
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -59,15 +60,6 @@ class PatchedQwen3VLModel(Qwen3VLModel):
         if inputs_embeds is None:
             inputs_embeds = self.get_input_embeddings()(input_ids)
 
-        # Get custom features from kwargs (use get() to preserve for subsequent generation steps)
-        custom_patch_features = kwargs.get("custom_patch_features", None)
-        custom_deepstack_features = kwargs.get("custom_deepstack_features", None)
-
-        def _stack_features(features):
-            if isinstance(features, (list, tuple)):
-                return torch.cat(features, dim=0)
-            return features
-
         image_mask = None
         video_mask = None
         deepstack_visual_embeds = None
@@ -75,12 +67,14 @@ class PatchedQwen3VLModel(Qwen3VLModel):
         deepstack_video_embeds = None
 
         if pixel_values is not None:
+            # ! if custom patch features are provided, skip vision encoder call and just pass them on
+            custom_patch_features = kwargs.get("custom_patch_features", None)
+            custom_deepstack_features = kwargs.get("custom_deepstack_features", None)
             if custom_patch_features is not None:
-                # Use custom features instead of computing from pixels
-                image_embeds = _stack_features(custom_patch_features).to(
-                    inputs_embeds.device, inputs_embeds.dtype
-                )
-                deepstack_image_embeds = custom_deepstack_features  # Can be None
+                if isinstance(custom_patch_features, (list, tuple)):
+                    custom_patch_features = torch.cat(custom_patch_features, dim=0)
+                image_embeds = custom_patch_features.to(inputs_embeds.device, inputs_embeds.dtype)
+                deepstack_image_embeds = custom_deepstack_features
             else:
                 image_embeds, deepstack_image_embeds = self.get_image_features(
                     pixel_values, image_grid_thw
@@ -166,11 +160,14 @@ class PatchedQwen3VLModel(Qwen3VLModel):
             if (
                 prefill_compiled_stage or prefill_noncompiled_stage
             ) or self.rope_deltas is None:
+                # ! pass zero_image_hw flag to get_rope_index
+                zero_image_hw = kwargs.get("zero_image_hw", False)
                 position_ids, rope_deltas = self.get_rope_index(
                     input_ids,
                     image_grid_thw,
                     video_grid_thw,
                     attention_mask=attention_mask_tensor,
+                    zero_image_hw=zero_image_hw,
                 )
                 self.rope_deltas = rope_deltas
             else:
@@ -205,6 +202,177 @@ class PatchedQwen3VLModel(Qwen3VLModel):
             rope_deltas=self.rope_deltas,
         )
 
+    # Override get_rope_index to zero out h, w for vision token positional embeddings
+    def get_rope_index(
+        self,
+        input_ids: Optional[torch.LongTensor] = None,
+        image_grid_thw: Optional[torch.LongTensor] = None,
+        video_grid_thw: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        zero_image_hw: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Different from the original implementation, Qwen3VL use timestamps rather than absolute time position ids."""
+
+        # Since we use timestamps to seperate videos, like <t1> <vision_start> <frame1> <vision_end> <t2> <vision_start> <frame2> <vision_end>, the video_grid_thw should also be split
+        if video_grid_thw is not None:
+            video_grid_thw = torch.repeat_interleave(
+                video_grid_thw, video_grid_thw[:, 0], dim=0
+            )
+            video_grid_thw[:, 0] = 1
+
+        spatial_merge_size = self.config.vision_config.spatial_merge_size
+        image_token_id = self.config.image_token_id
+        video_token_id = self.config.video_token_id
+        vision_start_token_id = self.config.vision_start_token_id
+        mrope_position_deltas = []
+        if input_ids is not None and (
+            image_grid_thw is not None or video_grid_thw is not None
+        ):
+            total_input_ids = input_ids
+            if attention_mask is None:
+                attention_mask = torch.ones_like(total_input_ids)
+            position_ids = torch.ones(
+                3,
+                input_ids.shape[0],
+                input_ids.shape[1],
+                dtype=input_ids.dtype,
+                device=input_ids.device,
+            )
+            image_index, video_index = 0, 0
+            attention_mask = attention_mask.to(total_input_ids.device)
+            for i, input_ids in enumerate(total_input_ids):
+                input_ids = input_ids[attention_mask[i] == 1]
+                image_nums, video_nums = 0, 0
+                vision_start_indices = torch.argwhere(
+                    input_ids == vision_start_token_id
+                ).squeeze(1)
+                vision_tokens = input_ids[vision_start_indices + 1]
+                image_nums = (vision_tokens == image_token_id).sum()
+                video_nums = (vision_tokens == video_token_id).sum()
+                input_tokens = input_ids.tolist()
+                llm_pos_ids_list: list = []
+                st = 0
+                remain_images, remain_videos = image_nums, video_nums
+                for _ in range(image_nums + video_nums):
+                    if image_token_id in input_tokens and remain_images > 0:
+                        ed_image = input_tokens.index(image_token_id, st)
+                    else:
+                        ed_image = len(input_tokens) + 1
+                    if video_token_id in input_tokens and remain_videos > 0:
+                        ed_video = input_tokens.index(video_token_id, st)
+                    else:
+                        ed_video = len(input_tokens) + 1
+                    if ed_image < ed_video:
+                        t, h, w = (
+                            image_grid_thw[image_index][0],
+                            image_grid_thw[image_index][1],
+                            image_grid_thw[image_index][2],
+                        )
+                        image_index += 1
+                        remain_images -= 1
+                        ed = ed_image
+
+                    else:
+                        t, h, w = (
+                            video_grid_thw[video_index][0],
+                            video_grid_thw[video_index][1],
+                            video_grid_thw[video_index][2],
+                        )
+                        video_index += 1
+                        remain_videos -= 1
+                        ed = ed_video
+                    llm_grid_t, llm_grid_h, llm_grid_w = (
+                        t.item(),
+                        h.item() // spatial_merge_size,
+                        w.item() // spatial_merge_size,
+                    )
+                    text_len = ed - st
+
+                    st_idx = (
+                        llm_pos_ids_list[-1].max() + 1
+                        if len(llm_pos_ids_list) > 0
+                        else 0
+                    )
+                    llm_pos_ids_list.append(
+                        torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx
+                    )
+
+                    # t_index is always 0 because llm_grid_t is always 1 (we use timestamps to encode the temporal information for videos)
+                    t_index = (
+                        torch.arange(llm_grid_t)
+                        .view(-1, 1)
+                        .expand(-1, llm_grid_h * llm_grid_w)
+                        .flatten()
+                    )
+                    h_index = (
+                        torch.arange(llm_grid_h)
+                        .view(1, -1, 1)
+                        .expand(llm_grid_t, -1, llm_grid_w)
+                        .flatten()
+                    )
+                    w_index = (
+                        torch.arange(llm_grid_w)
+                        .view(1, 1, -1)
+                        .expand(llm_grid_t, llm_grid_h, -1)
+                        .flatten()
+                    )
+                    if zero_image_hw:
+                        h_index = torch.zeros_like(h_index, device=h_index.device, dtype=h_index.dtype)
+                        w_index = torch.zeros_like(w_index, device=w_index.device, dtype=w_index.dtype)
+                    llm_pos_ids_list.append(
+                        torch.stack([t_index, h_index, w_index]) + text_len + st_idx
+                    )
+                    st = ed + llm_grid_t * llm_grid_h * llm_grid_w
+
+                if st < len(input_tokens):
+                    st_idx = (
+                        llm_pos_ids_list[-1].max() + 1
+                        if len(llm_pos_ids_list) > 0
+                        else 0
+                    )
+                    text_len = len(input_tokens) - st
+                    llm_pos_ids_list.append(
+                        torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx
+                    )
+
+                llm_positions = torch.cat(llm_pos_ids_list, dim=1).reshape(3, -1)
+                position_ids[..., i, attention_mask[i] == 1] = llm_positions.to(
+                    position_ids.device
+                )
+                mrope_position_deltas.append(
+                    llm_positions.max() + 1 - len(total_input_ids[i])
+                )
+            mrope_position_deltas = torch.tensor(
+                mrope_position_deltas, device=input_ids.device
+            ).unsqueeze(1)
+            return position_ids, mrope_position_deltas
+        else:
+            if attention_mask is not None:
+                position_ids = attention_mask.long().cumsum(-1) - 1
+                position_ids.masked_fill_(attention_mask == 0, 1)
+                position_ids = (
+                    position_ids.unsqueeze(0)
+                    .expand(3, -1, -1)
+                    .to(attention_mask.device)
+                )
+                max_position_ids = position_ids.max(0, keepdim=False)[0].max(
+                    -1, keepdim=True
+                )[0]
+                mrope_position_deltas = max_position_ids + 1 - attention_mask.shape[-1]
+            else:
+                position_ids = (
+                    torch.arange(input_ids.shape[1], device=input_ids.device)
+                    .view(1, 1, -1)
+                    .expand(3, input_ids.shape[0], -1)
+                )
+                mrope_position_deltas = torch.zeros(
+                    [input_ids.shape[0], 1],
+                    device=input_ids.device,
+                    dtype=input_ids.dtype,
+                )
+
+            return position_ids, mrope_position_deltas
+
 
 class PatchedQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
     """Qwen3VLForConditionalGeneration with support for custom patch features.
@@ -218,6 +386,7 @@ class PatchedQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         # Swap inner model to use our patched version with custom_patch_features support
         self.model.__class__ = PatchedQwen3VLModel
 
+    # Override input preparation to pass on custom_patch_features and custom_deepstack_features
     def prepare_inputs_for_generation(
         self,
         input_ids,
@@ -233,6 +402,7 @@ class PatchedQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         video_grid_thw=None,
         custom_patch_features=None,
         custom_deepstack_features=None,
+        zero_image_hw=None,
         **kwargs,
     ):
         model_inputs = super().prepare_inputs_for_generation(
@@ -253,4 +423,6 @@ class PatchedQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
             model_inputs["custom_patch_features"] = custom_patch_features
         if custom_deepstack_features is not None:
             model_inputs["custom_deepstack_features"] = custom_deepstack_features
+        if zero_image_hw is not None:
+            model_inputs["zero_image_hw"] = zero_image_hw
         return model_inputs
