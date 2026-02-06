@@ -20,7 +20,6 @@ from transformers.utils.quantization_config import BitsAndBytesConfig
 from qwen_vl_utils import process_vision_info
 
 from .patched_qwen import (
-    PatchedQwen2_5_VLForConditionalGeneration,
     PatchedQwen3VLForConditionalGeneration,
 )
 from .thinking_budget_processor import ThinkingTokenBudgetProcessor
@@ -31,12 +30,6 @@ from .tools import IMAGE_PLACEHOLDER
 # images to dimensions divisible by (patch_size × spatial_merge).
 # The main difference: Qwen2.5 has an extra-patch quirk when (dim // patch_size) % 4 == 3.
 QWEN_CONSTANTS = {
-    "qwen25": {
-        "patch_size": 14,
-        "spatial_merge": 2,
-        "effective_patch_size": 28,  # 14 * 2
-        "num_deepstack_layers": 0,
-    },
     "qwen3": {
         "patch_size": 16,
         "spatial_merge": 2,
@@ -53,16 +46,16 @@ NEW_TOKEN_LIMIT = 10000
 
 def timestep_to_seconds_str(timestep: int, fps: float) -> str:
     """Convert timestep index to Qwen3 temporal format.
-    
+
     Args:
         timestep: Integer timestep index
         fps: Frames per second
-        
+
     Returns:
         Formatted string like "<3.0 seconds>"
     """
     seconds = timestep / fps
-    return f"time=\"<{seconds:.1f} seconds>\""
+    return f'time="<{seconds:.1f} seconds>"'
 
 
 def qwen3_deepstack_to_cat(
@@ -107,7 +100,7 @@ def qwen3_cat_to_deepstack(
     return main_feats, deepstack_feats
 
 
-def qwen3_format_multiple_deepstack_features(
+def qwen3_cat_to_deepstack_multiple(
     vision_features: List[torch.Tensor],
 ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
     """Prepare Qwen3 vision features for multiple images.
@@ -140,55 +133,6 @@ def qwen3_format_multiple_deepstack_features(
     return main_features, deepstack_features
 
 
-def get_patched_qwen25(
-    use_bnb_4bit: bool = False,
-    use_bnb_8bit: bool = False,
-    attn_implementation: str = "sdpa",  # "flash_attention_2" or "sdpa"
-    torch_dtype: torch.dtype = torch.bfloat16,
-    device_map: Union[str, Dict[str, str]] = "auto",
-    max_memory: Optional[Dict[str, str]] = None,
-):
-    """Get a patched Qwen2_5_VL model/processor that supports raw patch features.
-
-    Uses inheritance-based patching via __class__ swapping after from_pretrained.
-    Parameters allow enabling weight quantization and optimized attention without editing Transformers.
-    """
-    model_path = "Qwen/Qwen2.5-VL-7B-Instruct"
-
-    quantization_config = None
-    if use_bnb_4bit:
-        quantization_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=torch_dtype,
-        )
-    elif use_bnb_8bit:
-        quantization_config = BitsAndBytesConfig(load_in_8bit=True)
-
-    fp_kwargs: Dict[str, Any] = {
-        "dtype": torch_dtype,
-        "device_map": device_map,
-        "low_cpu_mem_usage": True,
-        "attn_implementation": attn_implementation,
-    }
-    if quantization_config is not None:
-        fp_kwargs["quantization_config"] = quantization_config
-    if max_memory is not None:
-        fp_kwargs["max_memory"] = max_memory
-
-    model = PatchedQwen2_5_VLForConditionalGeneration.from_pretrained(
-        model_path,
-        **fp_kwargs,
-    )
-
-    processor = Qwen2_5_VLProcessor.from_pretrained(model_path)
-    # Prefer new cache format for memory-efficient caches
-    model.generation_config.return_legacy_cache = False
-    model.eval()
-    return model, processor
-
-
 def get_patched_qwen3(
     use_bnb_4bit: bool = False,
     use_bnb_8bit: bool = False,
@@ -205,7 +149,7 @@ def get_patched_qwen3(
     Parameters allow enabling weight quantization and optimized attention without editing Transformers.
     """
     # model_path = "Qwen/Qwen3-VL-8B-Thinking"
-    model_path = 'Qwen/Qwen3-VL-32B-Thinking'
+    model_path = "Qwen/Qwen3-VL-32B-Thinking"
 
     quantization_config = None
     if use_bnb_4bit:
@@ -245,99 +189,35 @@ def get_patched_qwen3(
     return model, processor
 
 
-def get_patched_qwen(
-    qwen_version: str,
-    use_bnb_4bit: bool = False,
-    use_bnb_8bit: bool = False,
-    attn_implementation: str = "sdpa",
-    torch_dtype: torch.dtype = torch.bfloat16,
-    device_map: Union[str, Dict[str, str]] = "auto",
-    max_memory: Optional[Dict[str, str]] = None,
-):
-    """Get a patched Qwen model/processor based on version string.
-
-    Args:
-        qwen_version: Either "qwen25" or "qwen3"
-        Other args: Same as get_patched_qwen25/get_patched_qwen3
-
-    Returns:
-        Tuple of (model, processor)
-    """
-    if qwen_version == "qwen25":
-        return get_patched_qwen25(
-            use_bnb_4bit=use_bnb_4bit,
-            use_bnb_8bit=use_bnb_8bit,
-            attn_implementation=attn_implementation,
-            torch_dtype=torch_dtype,
-            device_map=device_map,
-            max_memory=max_memory,
-        )
-    elif qwen_version == "qwen3":
-        return get_patched_qwen3(
-            use_bnb_4bit=use_bnb_4bit,
-            use_bnb_8bit=use_bnb_8bit,
-            attn_implementation=attn_implementation,
-            torch_dtype=torch_dtype,
-            device_map=device_map,
-            max_memory=max_memory,
-        )
-    else:
-        raise ValueError(
-            f"Unknown qwen_version: {qwen_version}. Must be one of {QWEN_VERSIONS}"
-        )
-
-
 def qwen_encode_image(
     image: Image.Image,
     model,
     processor,
-    qwen_version: str,
 ):
     """Encode an image through a Qwen vision encoder.
 
     Args:
         image: PIL Image to encode
-        model: Qwen model (either Qwen2.5-VL or Qwen3-VL)
+        model: Qwen model (Qwen3-VL)
         processor: Corresponding processor
-        qwen_version: Either "qwen25" or "qwen3"
 
     Returns:
-        For qwen25: Tensor of shape (N, hidden_dim)
-        For qwen3: Concatenated tensor of shape (N, hidden_dim * 4) containing
-                   [main | deepstack0 | deepstack1 | deepstack2]
+        Concatenated tensor of shape (N, hidden_dim * 4) containing
+        [main | deepstack0 | deepstack1 | deepstack2]
     """
     image_inputs = processor.image_processor(images=[image], return_tensors="pt")
     pixel_values = image_inputs["pixel_values"].to(model.device).to(torch.bfloat16)
     image_grid_thw = image_inputs["image_grid_thw"].to(model.device)
 
     with torch.no_grad():
-        if qwen_version == "qwen25":
-            feats = model.visual(pixel_values, image_grid_thw)
-            return feats
-        elif qwen_version == "qwen3":
-            # Qwen3 visual returns (main_embeds, deepstack_embeds_list)
-            main_embeds_tuple, deepstack_embeds = model.get_image_features(
-                pixel_values, image_grid_thw
-            )
-            main_feats = torch.cat(main_embeds_tuple, dim=0)
-            # Concatenate into single tensor for consistent storage format
-            return qwen3_deepstack_to_cat(main_feats, deepstack_embeds)
-        else:
-            raise ValueError(
-                f"Unknown qwen_version: {qwen_version}. Must be one of {QWEN_VERSIONS}"
-            )
+        main_embeds_tuple, deepstack_embeds = model.get_image_features(
+            pixel_values, image_grid_thw
+        )
+        main_feats = torch.cat(main_embeds_tuple, dim=0)
+        return qwen3_deepstack_to_cat(main_feats, deepstack_embeds)
 
 
-# This function takes in an RGB image  and a prompt
 def _set_generation_seed(seed: int) -> None:
-    """Set random seed for deterministic generation without enabling torch deterministic mode.
-
-    This seeds the RNG for sampling-based generation while avoiding the performance
-    and compatibility issues of torch.backends.cudnn.deterministic.
-
-    Args:
-        seed: Random seed value
-    """
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
@@ -346,12 +226,11 @@ def _set_generation_seed(seed: int) -> None:
 def ask_qwen_about_image(
     image: Image.Image,
     prompt: str,
-    model: Qwen2_5_VLForConditionalGeneration,
-    processor: Qwen2_5_VLProcessor,
+    model: Qwen3VLForConditionalGeneration,
+    processor: Qwen3VLProcessor,
     system_prompt: str = "You are a medical assistant designed to aid medical practitioners during a cholecystectomy procedure. The surgeon user will ask you a question and show you their current situation, and you give a concise answer.",
     max_new_tokens: int = NEW_TOKEN_LIMIT,
     max_thinking_tokens: int = THINKING_TOKEN_LIMIT,
-    qwen_version: str = "qwen3",
     seed: int = 42,
 ):
     messages = [
@@ -389,7 +268,7 @@ def ask_qwen_about_image(
 
     # thinking token limit processor
     logits_processor = None
-    if qwen_version == "qwen3" and max_thinking_tokens is not None:
+    if max_thinking_tokens is not None:
         thinking_processor = ThinkingTokenBudgetProcessor(
             processor.tokenizer, max_thinking_tokens=max_thinking_tokens
         )
@@ -430,7 +309,6 @@ def ask_qwen_about_image_features(
     processor: Qwen2_5_VLProcessor,
     system_prompt: str = "You are a medical assistant designed to aid medical practitioners during a cholecystectomy procedure. The surgeon user will ask you a question and show you their current situation, and you give a concise answer.",
     seed: int = 42,
-    qwen_version: str = "qwen25",
     max_new_tokens: int = NEW_TOKEN_LIMIT,
     max_thinking_tokens: Optional[int] = THINKING_TOKEN_LIMIT,
 ):
@@ -445,15 +323,20 @@ def ask_qwen_about_image_features(
         },
     ]
     return generate_with_vision_features(
-        messages, [image_features], model, processor, qwen_version=qwen_version, max_new_tokens=max_new_tokens, seed=seed, max_thinking_tokens=max_thinking_tokens
+        messages,
+        [image_features],
+        model,
+        processor,
+        max_new_tokens=max_new_tokens,
+        seed=seed,
+        max_thinking_tokens=max_thinking_tokens,
     )
 
 
 def model_inputs(
     messages: List[Dict[str, Any]],
     vision_features: List[torch.Tensor],
-    processor: Union[Qwen2_5_VLProcessor, Qwen3VLProcessor],
-    qwen_version: str = "qwen25",
+    processor: Qwen3VLProcessor,
     tools: List[Dict[str, Any]] = [],
 ):
     """Prepare model inputs from messages and vision features."""
@@ -478,7 +361,7 @@ def model_inputs(
     # the correct number of tokens after tokenizing and spatial merging
     # (we cannot just overwrite image_grid_thw because
     # input ids already contains placeholder vision tokens)
-    effective_patch_size = QWEN_CONSTANTS[qwen_version]["effective_patch_size"]
+    effective_patch_size = QWEN_CONSTANTS["qwen3"]["effective_patch_size"]
     mock_images: List[Image.Image] = []
     for feat in vision_features:
         n = int(feat.shape[0])
@@ -502,9 +385,8 @@ def model_inputs(
 def generate_with_vision_features(
     messages: List[Dict[str, Any]],
     vision_features: List[torch.Tensor],
-    model: Union[Qwen2_5_VLForConditionalGeneration, Qwen3VLForConditionalGeneration],
-    processor: Union[Qwen2_5_VLProcessor, Qwen3VLProcessor],
-    qwen_version: str = "qwen25",
+    model: Qwen3VLForConditionalGeneration,
+    processor: Qwen3VLProcessor,
     seed: int = 42,
     max_new_tokens: int = NEW_TOKEN_LIMIT,
     max_thinking_tokens: Optional[int] = THINKING_TOKEN_LIMIT,
@@ -514,12 +396,10 @@ def generate_with_vision_features(
     Args:
         messages: Chat messages with image placeholders
         vision_features: List of vision feature tensors.
-            For qwen25: each tensor is (N, hidden_dim)
-            For qwen3: each tensor is (N, hidden_dim * 4) containing [main | d0 | d1 | d2]
+            Each tensor is (N, hidden_dim * 4) containing [main | d0 | d1 | d2]
         model: Qwen model (patched version)
         processor: Qwen processor
-        qwen_version: Either "qwen25" or "qwen3"
-        max_tokens: Maximum tokens to generate
+        max_new_tokens: Maximum tokens to generate
         seed: Random seed for deterministic sampling
         max_thinking_tokens: Maximum tokens for thinking phase (Qwen3 only).
             If None, no limit is applied. If 0, thinking is disabled immediately.
@@ -529,44 +409,28 @@ def generate_with_vision_features(
     """
     # Build logits processor for thinking budget (Qwen3 only)
     logits_processor = None
-    if qwen_version == "qwen3" and max_thinking_tokens is not None:
+    if max_thinking_tokens is not None:
         thinking_processor = ThinkingTokenBudgetProcessor(
             processor.tokenizer, max_thinking_tokens=max_thinking_tokens
         )
         logits_processor = LogitsProcessorList([thinking_processor])
 
-    # For Qwen3, we need to split concatenated features into main + deepstack
-    if qwen_version == "qwen3":
-        main_features, deepstack_features = qwen3_format_multiple_deepstack_features(
-            vision_features
-        )
+    main_features, deepstack_features = qwen3_cat_to_deepstack_multiple(vision_features)
 
-        # preprocess and generate
-        inputs = model_inputs(
-            messages, main_features, processor, qwen_version=qwen_version
-        ).to(model.device)
+    # preprocess and generate
+    inputs = model_inputs(
+        messages, main_features, processor
+    ).to(model.device)
 
-        _set_generation_seed(seed)
-        generate_kwargs = {
-            "max_new_tokens": max_new_tokens,
-            "custom_patch_features": main_features,
-            "custom_deepstack_features": deepstack_features,
-        }
-        if logits_processor is not None:
-            generate_kwargs["logits_processor"] = logits_processor
-        generated_ids = model.generate(**inputs, **generate_kwargs)
-    else:
-        # Qwen2.5 path
-        inputs = model_inputs(
-            messages, vision_features, processor, qwen_version=qwen_version
-        ).to(model.device)
-
-        _set_generation_seed(seed)
-        generated_ids = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            custom_patch_features=vision_features,
-        )
+    _set_generation_seed(seed)
+    generate_kwargs = {
+        "max_new_tokens": max_new_tokens,
+        "custom_patch_features": main_features,
+        "custom_deepstack_features": deepstack_features,
+    }
+    if logits_processor is not None:
+        generate_kwargs["logits_processor"] = logits_processor
+    generated_ids = model.generate(**inputs, **generate_kwargs)
 
     # remove prefix tokens (model input) and decode
     generated_ids_trimmed = [
@@ -718,15 +582,17 @@ def _format_message_trace_for_debug(
     """Format message trace and tool calls for debugging output."""
     lines = []
     lines.append("=" * 80)
-    lines.append(f"EXCEPTION DURING AGENT GENERATION - Message Trace (iteration {iteration})")
+    lines.append(
+        f"EXCEPTION DURING AGENT GENERATION - Message Trace (iteration {iteration})"
+    )
     lines.append("=" * 80)
     lines.append("\n--- MESSAGE HISTORY ---\n")
-    
+
     for i, msg in enumerate(current_messages):
         role = msg.get("role", "unknown")
         content = msg.get("content", [])
         lines.append(f"\n[{i}] Role: {role}")
-        
+
         if isinstance(content, list):
             for j, item in enumerate(content):
                 item_type = item.get("type", "unknown")
@@ -742,15 +608,15 @@ def _format_message_trace_for_debug(
                     lines.append(f"  Content[{j}]: {item_type} = {str(item)[:200]}")
         else:
             lines.append(f"  Content: {str(content)[:500]}")
-    
+
     lines.append("\n--- TOOL CALL HISTORY ---\n")
     for i, tool_call in enumerate(tool_call_history):
         tool_name = tool_call.get("tool_name", "unknown")
         arguments = tool_call.get("arguments", {})
         result = tool_call.get("result", {})
-        
+
         lines.append(f"\n[{i}] Tool: {tool_name}")
-        
+
         # Filter out tensors before serializing
         filtered_args = _filter_tensors_for_debug(arguments)
         if filtered_args:
@@ -763,7 +629,7 @@ def _format_message_trace_for_debug(
                 lines.append("  Arguments: <error serializing arguments>")
         else:
             lines.append("  Arguments: (filtered - contained only tensors/arrays)")
-        
+
         filtered_result = _filter_tensors_for_debug(result)
         if filtered_result:
             try:
@@ -775,7 +641,7 @@ def _format_message_trace_for_debug(
                 lines.append("  Result: <error serializing result>")
         else:
             lines.append("  Result: (filtered - contained only tensors/arrays)")
-    
+
     lines.append("\n" + "=" * 80)
     return "\n".join(lines)
 
@@ -786,7 +652,6 @@ def generate_with_vision_features_agentic(
     model: Union[Qwen2_5_VLForConditionalGeneration, Qwen3VLForConditionalGeneration],
     processor: Union[Qwen2_5_VLProcessor, Qwen3VLProcessor],
     tools: Dict[str, Tuple[Callable, Dict[str, Any]]],
-    qwen_version: str = "qwen3",
     max_iterations: int = 10,
     tool_call_limits: Optional[Dict[str, Optional[int]]] = None,
     verbose: bool = False,
@@ -812,7 +677,6 @@ def generate_with_vision_features_agentic(
                    - "vision_features" (List[torch.Tensor], optional): List of feature tensors,
                      each (N, hidden_dim * 4) in concatenated format [main | d0 | d1 | d2].
                      Must have exactly as many tensors as IMAGE_PLACEHOLDER markers in text.
-        qwen_version: Either "qwen25" or "qwen3"
         max_iterations: Maximum number of tool-calling iterations
         tool_call_limits: Optional dict mapping tool_name -> max_calls (int or None for infinite).
             If None, all tools have infinite calls. If a tool is not in the dict, it defaults to infinite.
@@ -837,10 +701,6 @@ def generate_with_vision_features_agentic(
             - "total_time" (float): Total wall time for the entire agentic loop (seconds).
     """
     fn_start_time = time.time()
-
-    assert qwen_version == "qwen3", (
-        "qwen3 is the only supported version for agentic mode"
-    )
 
     # Extract tool specs for the model
     tool_specs = [spec for _, spec in tools.values()]
@@ -882,7 +742,7 @@ def generate_with_vision_features_agentic(
             print(f"\n[{timestamp}] --- Iteration {iteration} ---", flush=True)
 
         # Convert accumulated features to deepstack format for this iteration
-        main_features, deepstack_features = qwen3_format_multiple_deepstack_features(
+        main_features, deepstack_features = qwen3_cat_to_deepstack_multiple(
             all_vision_features
         )
 
@@ -891,7 +751,6 @@ def generate_with_vision_features_agentic(
             current_messages,
             main_features,
             processor,
-            qwen_version=qwen_version,
             tools=tool_specs,
         ).to(model.device)
 
@@ -950,7 +809,11 @@ def generate_with_vision_features_agentic(
                 {"role": "assistant", "content": [{"type": "text", "text": response}]}
             )
             final_answer = _extract_final_answer(response)
-            tok_per_sec = total_generated_tokens / total_generation_time if total_generation_time > 0 else 0.0
+            tok_per_sec = (
+                total_generated_tokens / total_generation_time
+                if total_generation_time > 0
+                else 0.0
+            )
             total_time = time.time() - fn_start_time
             return {
                 "final_answer": final_answer,
@@ -974,14 +837,17 @@ def generate_with_vision_features_agentic(
 
             if verbose:
                 timestamp = time.strftime("%H:%M:%S")
-                print(f"[{timestamp}] [Tool Call]: {tool_name}({json.dumps(_filter_tensors_for_debug(arguments))})", flush=True)
+                print(
+                    f"[{timestamp}] [Tool Call]: {tool_name}({json.dumps(_filter_tensors_for_debug(arguments))})",
+                    flush=True,
+                )
 
             if tool_name not in tools:
                 result = {"text": json.dumps({"error": f"Unknown tool '{tool_name}'"})}
             else:
                 # Check remaining calls before executing
                 remaining = remaining_calls.get(tool_name, None)
-                
+
                 if remaining is not None and remaining <= 0:
                     # No calls left
                     result = {
@@ -998,22 +864,28 @@ def generate_with_vision_features_agentic(
                     callable_fn, _ = tools[tool_name]
                     try:
                         result = callable_fn(**arguments)
-                        
+
                         # Decrement remaining calls if not infinite
                         if remaining is not None:
                             remaining_calls[tool_name] = remaining - 1
                             remaining_after = remaining - 1
                         else:
                             remaining_after = None
-                        
+
                         # Add remaining calls info to the result
                         result_data = json.loads(result["text"])
                         result_data["remaining_calls"] = (
-                            remaining_after if remaining_after is not None else "infinite"
+                            remaining_after
+                            if remaining_after is not None
+                            else "infinite"
                         )
                         result["text"] = json.dumps(result_data)
                     except Exception as e:
-                        result = {"text": json.dumps({"error": f"Error executing tool: {str(e)}"})}
+                        result = {
+                            "text": json.dumps(
+                                {"error": f"Error executing tool: {str(e)}"}
+                            )
+                        }
                         # Still decrement on error to prevent infinite retries
                         if remaining is not None:
                             remaining_calls[tool_name] = max(0, remaining - 1)
@@ -1022,7 +894,9 @@ def generate_with_vision_features_agentic(
                             remaining_after_error = None
                         result_data = json.loads(result["text"])
                         result_data["remaining_calls"] = (
-                            remaining_after_error if remaining_after_error is not None else "infinite"
+                            remaining_after_error
+                            if remaining_after_error is not None
+                            else "infinite"
                         )
                         result["text"] = json.dumps(result_data)
 
@@ -1030,7 +904,10 @@ def generate_with_vision_features_agentic(
                 # Filter for logging
                 log_result = _filter_tensors_for_debug(result)
                 timestamp = time.strftime("%H:%M:%S")
-                print(f"[{timestamp}] [Tool Result]: {json.dumps(log_result)}\n", flush=True)
+                print(
+                    f"[{timestamp}] [Tool Result]: {json.dumps(log_result)}\n",
+                    flush=True,
+                )
 
             tool_call_record = {
                 "tool_name": tool_name,
@@ -1047,7 +924,11 @@ def generate_with_vision_features_agentic(
 
     # Max iterations reached - try to extract any answer from the last response
     final_answer = _extract_final_answer(response)
-    tok_per_sec = total_generated_tokens / total_generation_time if total_generation_time > 0 else 0.0
+    tok_per_sec = (
+        total_generated_tokens / total_generation_time
+        if total_generation_time > 0
+        else 0.0
+    )
     total_time = time.time() - fn_start_time
     return {
         "final_answer": final_answer,
@@ -1069,7 +950,6 @@ def prompt_graph_agent(
     model: Union[Qwen2_5_VLForConditionalGeneration, Qwen3VLForConditionalGeneration],
     processor: Union[Qwen2_5_VLProcessor, Qwen3VLProcessor],
     tools: Dict[str, Tuple[Callable, Dict[str, Any]]],
-    qwen_version: str = "qwen3",
     system_prompt: str = None,
     max_iterations: int = 20,
     tool_call_limits: Optional[Dict[str, Optional[int]]] = None,
@@ -1094,7 +974,6 @@ def prompt_graph_agent(
     max_thinking_tokens: int - maximum tokens for thinking phase per iteration (Qwen3 only).
         If None, no limit is applied. If 0, thinking is disabled immediately.
     """
-    assert qwen_version == "qwen3", "qwen3 is required for graph agentic prompting"
     assert tools is not None and len(tools) > 0, (
         "tools are required for graph agentic prompting"
     )
@@ -1113,25 +992,27 @@ def prompt_graph_agent(
     # Build JSON structure with IMAGE_PLACEHOLDER markers for nodes
     nodes_data = []
     for n in range(centroids.shape[0]):
-        nodes_data.append({
-            "node_id": int(n),
-            "rough_image": IMAGE_PLACEHOLDER,
-            "centroid": {
-                "x": round(float(centroids[n][0]), 2),
-                "y": round(float(centroids[n][1]), 2),
-                "z": round(float(centroids[n][2]), 2),
-            },
-            "bbox_center": {
-                "x": round(float(centers[n][0]), 2),
-                "y": round(float(centers[n][1]), 2),
-                "z": round(float(centers[n][2]), 2),
-            },
-            "bbox_extent": {
-                "x": round(float(extents[n][0]), 2),
-                "y": round(float(extents[n][1]), 2),
-                "z": round(float(extents[n][2]), 2),
-            },
-        })
+        nodes_data.append(
+            {
+                "node_id": int(n),
+                "rough_image": IMAGE_PLACEHOLDER,
+                "centroid": {
+                    "x": round(float(centroids[n][0]), 2),
+                    "y": round(float(centroids[n][1]), 2),
+                    "z": round(float(centroids[n][2]), 2),
+                },
+                "bbox_center": {
+                    "x": round(float(centers[n][0]), 2),
+                    "y": round(float(centers[n][1]), 2),
+                    "z": round(float(centers[n][2]), 2),
+                },
+                "bbox_extent": {
+                    "x": round(float(extents[n][0]), 2),
+                    "y": round(float(extents[n][1]), 2),
+                    "z": round(float(extents[n][2]), 2),
+                },
+            }
+        )
 
     graph_data = {
         "timestep": int(initial_timestep_idx),
@@ -1141,7 +1022,7 @@ def prompt_graph_agent(
     # Serialize to JSON and split by IMAGE_PLACEHOLDER to interleave images
     graph_json = json.dumps(graph_data, indent=2)
     graph_parts = graph_json.split(IMAGE_PLACEHOLDER)
-    
+
     # Build interleaved content: text, image, text, image, ..., text
     graph_content = []
     for i, part in enumerate(graph_parts):
@@ -1157,7 +1038,7 @@ def prompt_graph_agent(
         for tool_name in tools.keys():
             limit = tool_call_limits.get(tool_name, None)
             tool_limits_data[tool_name] = "infinite" if limit is None else limit
-        
+
         tool_limits_json = json.dumps({"tool_call_limits": tool_limits_data}, indent=2)
         tool_limits_content.append({"type": "text", "text": tool_limits_json + "\n\n"})
 
@@ -1180,7 +1061,6 @@ def prompt_graph_agent(
         model=model,
         processor=processor,
         tools=tools,
-        qwen_version=qwen_version,
         max_iterations=max_iterations,
         tool_call_limits=tool_call_limits,
         verbose=verbose,
@@ -1198,12 +1078,11 @@ def prompt_with_video_frames(
     system_prompt: str = None,
     fps: float = None,
     seed: int = 42,
-    qwen_version: str = "qwen3",
     max_new_tokens: int = NEW_TOKEN_LIMIT,
     max_thinking_tokens: int = THINKING_TOKEN_LIMIT,
 ) -> str:
     """Prompt model with video frames (list of images).
-    
+
     Args:
         question: Question to ask about the video
         image_paths: List of image file paths (as strings or Path objects)
@@ -1214,7 +1093,6 @@ def prompt_with_video_frames(
         max_thinking_tokens: Maximum tokens for thinking phase (Qwen3 only).
             If None, no limit is applied. If 0, thinking is disabled immediately.
         fps: Optional frames per second for video metadata
-        qwen_version: Either "qwen25" or "qwen3"
         max_new_tokens: Maximum tokens to generate
         max_thinking_tokens: Maximum tokens for thinking phase (Qwen3 only).
             If None, no limit is applied. If 0, thinking is disabled immediately.
@@ -1223,7 +1101,7 @@ def prompt_with_video_frames(
     """
     # Convert paths to strings
     image_paths_str = [str(p) for p in image_paths]
-    
+
     # Build messages with video content
     content = []
     video_content = {"type": "video", "video": image_paths_str}
@@ -1234,24 +1112,23 @@ def prompt_with_video_frames(
         video_content["sample_fps"] = fps
     content.append(video_content)
     content.append({"type": "text", "text": question})
-    
+
     messages = []
     if system_prompt:
-        messages.append({
-            "role": "system",
-            "content": [{"type": "text", "text": system_prompt}]
-        })
+        messages.append(
+            {"role": "system", "content": [{"type": "text", "text": system_prompt}]}
+        )
     messages.append({"role": "user", "content": content})
-    
+
     # Apply chat template
     text = processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
-    
+
     # Process vision info to extract images and videos
     # Note: raw_fps and sample_fps in video_content create metadata internally in qwen_vl_utils
     image_inputs, video_inputs = process_vision_info(messages)
-    
+
     # Create VideoMetadata for explicit fps specification
     # This ensures the model knows the correct temporal spacing between frames
     video_metadata = None
@@ -1261,10 +1138,10 @@ def prompt_with_video_frames(
             VideoMetadata(
                 total_num_frames=num_frames,
                 fps=fps,
-                frames_indices=list(range(num_frames))
+                frames_indices=list(range(num_frames)),
             )
         ]
-    
+
     # Prepare inputs
     # CRITICAL: Set do_sample_frames=False to prevent processor from resampling our pre-selected frames
     # Pass video_metadata explicitly to ensure model gets correct fps
@@ -1280,7 +1157,7 @@ def prompt_with_video_frames(
 
     # thinking token limit processor
     logits_processor = None
-    if qwen_version == "qwen3" and max_thinking_tokens is not None:
+    if max_thinking_tokens is not None:
         thinking_processor = ThinkingTokenBudgetProcessor(
             processor.tokenizer, max_thinking_tokens=max_thinking_tokens
         )
@@ -1291,23 +1168,23 @@ def prompt_with_video_frames(
     }
     if logits_processor is not None:
         generate_kwargs["logits_processor"] = logits_processor
-    
+
     # Generate
     _set_generation_seed(seed)
     with torch.no_grad():
         generated_ids = model.generate(**inputs, **generate_kwargs)
-    
+
     # Decode
     generated_ids_trimmed = [
-        out_ids[len(in_ids):] 
+        out_ids[len(in_ids) :]
         for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
     ]
     output_text = processor.batch_decode(
         generated_ids_trimmed,
         skip_special_tokens=True,
-        clean_up_tokenization_spaces=False
+        clean_up_tokenization_spaces=False,
     )[0]
-    
+
     return output_text
 
 
@@ -1317,7 +1194,7 @@ def crop_patch_features(patch_feat: torch.Tensor, cw, ch, cx1, cx2, cy1, cy2):
     )
 
 
-def get_patch_hw(im_height: int, im_width: int, qwen_version: str) -> Tuple[int, int]:
+def get_patch_hw(im_height: int, im_width: int) -> Tuple[int, int]:
     """Get patchgrid dimensions for given image dimensions.
 
     Uses smart_resize logic: round(dim / factor) * factor to get resized dimensions,
@@ -1326,12 +1203,11 @@ def get_patch_hw(im_height: int, im_width: int, qwen_version: str) -> Tuple[int,
     Args:
         im_height: Image height in pixels
         im_width: Image width in pixels
-        qwen_version: Either "qwen25" or "qwen3"
 
     Returns:
         Tuple of (patches_height, patches_width)
     """
-    factor = QWEN_CONSTANTS[qwen_version]["effective_patch_size"]
+    factor = QWEN_CONSTANTS["qwen3"]["effective_patch_size"]
     resized_h, resized_w = smart_resize(
         im_height, im_width, factor=factor, min_pixels=1, max_pixels=10**9
     )
@@ -1339,19 +1215,18 @@ def get_patch_hw(im_height: int, im_width: int, qwen_version: str) -> Tuple[int,
 
 
 def get_patch_segmasks(
-    im_height: int, im_width: int, qwen_version: str
+    im_height: int, im_width: int
 ) -> torch.Tensor:
     """Generate an instance segmentation mask where each instance corresponds to one vision encoder patch.
 
     Args:
         im_height: Image height in pixels
         im_width: Image width in pixels
-        qwen_version: Either "qwen25" or "qwen3"
 
     Returns:
         Tensor of shape (resized_H, resized_W) with patch indices at each pixel
     """
-    factor = QWEN_CONSTANTS[qwen_version]["effective_patch_size"]
+    factor = QWEN_CONSTANTS["qwen3"]["effective_patch_size"]
     resized_h, resized_w = smart_resize(
         im_height, im_width, factor=factor, min_pixels=1, max_pixels=10**9
     )

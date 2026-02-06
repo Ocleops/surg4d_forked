@@ -19,7 +19,7 @@ from llm.qwen_utils import (
     prompt_with_graph_at_timestep,
     prompt_graph_agent,
     ask_qwen_about_image,
-    qwen3_format_multiple_deepstack_features,
+    qwen3_cat_to_deepstack_multiple,
 )
 from llm.tools import GraphTools
 from autoencoder.model_qwen import QwenAutoencoder
@@ -117,7 +117,7 @@ def extract_text_to_vision_attention(
 
     # Handle Qwen3 concatenated features: split into main + deepstack
     if qwen_version == "qwen3":
-        main_features, deepstack_features = qwen3_format_multiple_deepstack_features(
+        main_features, deepstack_features = qwen3_cat_to_deepstack_multiple(
             [vision_features]
         )
         # Prepare inputs using main features for correct token count
