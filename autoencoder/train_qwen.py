@@ -4,7 +4,7 @@ Train Qwen feature autoencoder (inspired by splattalk)
 
 from pathlib import Path
 import argparse
-from typing import List
+from typing import List, Literal
 from datetime import datetime
 import torch
 import torch.nn.functional as F
@@ -26,6 +26,10 @@ def train(
     device: str = 'cuda:0',
     full_dim: int = 3584,
     latent_dim: int = 3,
+    sigma_input: float = 0.0,
+    sigma_latent: float = 0.0,
+    n_latent: int = 10,
+    loss: Literal['mse', 'l1'] = 'mse',
 ) -> None:
     """Train Qwen feature autoencoder.
 
@@ -71,29 +75,51 @@ def train(
         pbar = tqdm(train_loader, desc=f"epoch {epoch+1}/{epochs}")
         for batch in pbar:
             x = batch.to(device, dtype=torch.float32)
-            x_rec = model(x)
-            loss = F.mse_loss(x_rec, x)
+            x_std = x.std()
+            if sigma_input > 0:
+                x = x + torch.randn_like(x) * sigma_input
+
+            z = model.encode(x)
+            z_std = z.std()
+
+            if sigma_latent > 0 and n_latent > 0:
+                n_samples = z.shape[0]
+                z = z.repeat(n_latent + 1, 1)
+                z[n_samples:] += torch.randn_like(z[n_samples:]) * sigma_latent
+                z = z / torch.linalg.norm(z, ord=2, dim=-1, keepdim=True).clamp(min=1e-8)
+                x = x.repeat(n_latent + 1, 1)
+
+            x_rec = model.decode(z)
+            l1 = F.l1_loss(x_rec, x)
+            mse = F.mse_loss(x_rec, x)
+            train_loss = mse if loss == 'mse' else l1
 
             optimizer.zero_grad()
-            loss.backward()
+            train_loss.backward()
             optimizer.step()
 
-            tb.add_scalar('train/loss', loss.item(), global_step)
+            tb.add_scalar(f'train/l1', l1.item(), global_step)
+            tb.add_scalar(f'train/mse', mse.item(), global_step)
+            tb.add_scalar('train/x_std', x_std.item(), global_step)
+            tb.add_scalar('train/z_std', z_std.item(), global_step)
             global_step += 1
-            pbar.set_postfix(loss=float(loss.item()))
+            pbar.set_postfix(loss=float(train_loss.item()))
 
         # Eval
         model.eval()
-        val_loss_sum = 0.0
+        l1_sum = 0.0
+        mse_sum = 0.0
         n_samples = 0
         with torch.no_grad():
             for batch in val_loader:
                 x = batch.to(device, dtype=torch.float32)
                 x_rec = model(x)
-                val_loss_sum += F.mse_loss(x_rec, x, reduction='sum').item()
+                l1_sum += F.l1_loss(x_rec, x)
+                mse_sum += F.mse_loss(x_rec, x)
                 n_samples += x.numel()
-        val_loss = val_loss_sum / n_samples
-        tb.add_scalar('val/loss', val_loss, epoch)
+        tb.add_scalar(f'val/l1', l1_sum / n_samples, epoch)
+        tb.add_scalar(f'val/mse', mse_sum / n_samples, epoch)
+        val_loss = l1_sum / n_samples if loss == 'l1' else mse_sum / n_samples
         if val_loss < best_val:
             best_val = val_loss
             torch.save(model.state_dict(), checkpoint_dir / 'best_ckpt.pth')

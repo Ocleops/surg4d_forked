@@ -121,6 +121,10 @@ def train_global_ae(clips, cfg: DictConfig):
         batch_size=cfg.autoencoder.batch_size,
         full_dim=cfg.autoencoder.full_dim,
         latent_dim=cfg.autoencoder.latent_dim,
+        sigma_input=cfg.autoencoder.sigma_input,
+        sigma_latent=cfg.autoencoder.sigma_latent,
+        loss=cfg.autoencoder.loss,
+        n_latent=cfg.autoencoder.n_latent,
     )
 
 
@@ -143,6 +147,10 @@ def train_ae(
         batch_size=cfg.autoencoder.batch_size,
         full_dim=cfg.autoencoder.full_dim,
         latent_dim=cfg.autoencoder.latent_dim,
+        sigma_input=cfg.autoencoder.sigma_input,
+        sigma_latent=cfg.autoencoder.sigma_latent,
+        loss=cfg.autoencoder.loss,
+        n_latent=cfg.autoencoder.n_latent,
     )
     save_dim_reduced(
         clip=clip,
