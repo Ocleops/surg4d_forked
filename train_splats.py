@@ -195,8 +195,12 @@ def train_splat(clip: DictConfig, cfg: DictConfig):
     args.language_feature_lr = cfg.splat.learning_rates.language_feature
     args.scaling_lr = cfg.splat.learning_rates.scaling
     args.rotation_lr = cfg.splat.learning_rates.rotation
-    args.no_dshs = not cfg.splat.dynamic_color
+    args.no_dx = not cfg.splat.dynamic_position
     args.no_ds = not cfg.splat.dynamic_scale
+    args.no_dr = not cfg.splat.dynamic_rotation
+    args.no_do = not cfg.splat.dynamic_opacity
+    args.no_dshs = not cfg.splat.dynamic_color
+    args.no_grid = not cfg.splat.dynamic_grid
     args.rezero_init = cfg.splat.rezero_init
 
     # Get timestamp
@@ -347,8 +351,12 @@ def render_splat(
             args = merge_hparams(args, config)
 
         # Override dynamic property flags from Hydra config (same as training)
-        args.no_dshs = not cfg.splat.dynamic_color
+        args.no_dx = not cfg.splat.dynamic_position
         args.no_ds = not cfg.splat.dynamic_scale
+        args.no_dr = not cfg.splat.dynamic_rotation
+        args.no_do = not cfg.splat.dynamic_opacity
+        args.no_dshs = not cfg.splat.dynamic_color
+        args.no_grid = not cfg.splat.dynamic_grid
         args.rezero_init = cfg.splat.rezero_init
 
         # Call render function

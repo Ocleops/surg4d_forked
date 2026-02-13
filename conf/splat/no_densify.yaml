@@ -2,33 +2,33 @@ config_path: arguments/cholecseg8k/no_tv.py # this config disables total variati
 # config_path: arguments/cholecseg8k/default.py
 
 loss_weights:
-  rgb_l1: 1.0 # base stages: mean absolute error between rendered RGB and GT RGB
-  depth_l1: 0.0 # base stages: mean absolute error between rendered depth map and GT depth map
-  lang_cosine: 0.01 # lang stages: CosineEmbeddingLoss between predicted and GT language features (masked valid pixels only)
-  joint_rgb_l1: 1.0 # lang stages with joint_train: extra RGB L1 term added alongside language loss
-  ssim: 0.0 # all stages: adds ssim_weight * (1 - SSIM(render, gt)) as a perceptual image-structure term
+  rgb_l1: 1.0 # base stages rgb
+  depth_l1: 0.0 # base stages depth
+  lang_cosine: 0.01 # lang stages lf
+  joint_rgb_l1: 1.0 # joint stages rgb (coarse lang atm, see joint options below)
+  ssim: 0.0 # all stages
   fine_regulation: 1.0 # fine stages: global multiplier on deformation-grid regularization (time_smoothness + l1_time_planes + plane_tv)
   time_smoothness: 0.0 # fine stages: weight on second-derivative smoothness of temporal/spatiotemporal deformation planes
   l1_time_planes: 0.0 # fine stages: weight on mean |1 - grid| for temporal/spatiotemporal planes (encourages static/identity deformation)
   plane_tv: 0.0 # fine stages: weight on spatial total-variation regularization of deformation planes
 
 learning_rates:
-  lr_max_steps: 10000 # xyz/deformation/grid LR schedule horizon in optimizer steps
-  position_init: 0.00016 # xyz Adam LR at start (scheduled)
-  position_final: 0.0000016 # xyz Adam LR at end of schedule
-  position_delay_mult: 0.01 # xyz LR schedule warmup multiplier
-  deformation_init: 0.00016 # deformation MLP LR at start (scheduled), also used by lang deformation heads
-  deformation_final: 0.000016 # deformation MLP LR at end of schedule, also used by lang deformation heads
-  deformation_delay_mult: 0.01 # deformation/grid LR schedule warmup multiplier, also used by lang deformation heads
-  grid_init: 0.0016 # deformation grid LR at start (scheduled)
-  grid_final: 0.00016 # deformation grid LR at end of schedule
-  feature: 0.0025 # SH feature LR for f_dc (f_rest uses feature/20 internally)
-  opacity: 0.05 # opacity LR
-  language_feature: 0.0025 # language feature LR
-  scaling: 0.005 # scale LR
-  rotation: 0.001 # rotation LR
+  lr_max_steps: 20000 # used by all scheduled learning rates
+  position_init: 0.00016 # xyz initial
+  position_final: 0.0000016 # xyz final
+  position_delay_mult: 0.01 # xyz delay multiplier
+  deformation_init: 0.00016 # all deformation heads (including lang) initial
+  deformation_final: 0.000016 # all deformation heads (including lang) final
+  deformation_delay_mult: 0.01 # all deformation heads delay multiplier
+  grid_init: 0.0016 # hexplane initial
+  grid_final: 0.00016 # hexplane final
+  feature: 0.0025 # color (sh)
+  opacity: 0.05 # opacity
+  language_feature: 0.0025 # static lf and discrete base states
+  scaling: 0.005 # scale
+  rotation: 0.001 # rotation
 
-tensorboard_subdir: "states15_iter10k" # TensorBoard subdir prefix; actual folder is "<prefix>_<timestamp>"
+tensorboard_subdir: "states15_iter20k" # TensorBoard subdir prefix; actual folder is "<prefix>_<timestamp>"
 
 # CoTracker3 control point settings
 cotracker_k_neighbors: 3 # number of nearest control points per Gaussian
@@ -36,15 +36,19 @@ cotracker_idw_power: 2.0  # power parameter for inverse distance weighting
 # TODO: usage not implemented yet
 cotracker_spawn_threshold_pct: 0.1  # spawn new Gaussians when pixels are >X% of image width/height from control points
 
-dynamic_language: true
+dynamic_position: true # positions are overwritten anyway, doesn't matter
 dynamic_scale: true
+dynamic_rotation: true
+dynamic_opacity: false
 dynamic_color: true
+dynamic_language: true
+dynamic_grid: true
 
 # coarse iterations cut by 10x because we're only overfitting the feature heads on a single frame
-coarse_base_iterations: 1000
-coarse_lang_iterations: 1000
-fine_base_iterations: 10000
-fine_lang_iterations: 10000
+coarse_base_iterations: 2000
+coarse_lang_iterations: 2000
+fine_base_iterations: 20000
+fine_lang_iterations: 20000
 
 # settings for simplifying coarse training for high quality initial depth map
 # TODO: fix this later, only for debugging
@@ -65,7 +69,7 @@ progressive_window:
 # each stage starts at 0 iterations and the lang stages consider these lists
 # ATTENTION: it's crucial to save the last iteration of fine lang here!
 test_iterations: [499, 999, 1499, 1999, 2999, 4999, 8999, 9999] # when to compute val metrics (logged to tensorboard)
-save_iterations: [10000] # when to save model checkpoints to disk (for rendering, graph extraction, etc.)
+save_iterations: [20000] # when to save model checkpoints to disk (for rendering, graph extraction, etc.)
 checkpoint_iterations: [] # when to save full checkpoints (with optimizer states for resuming)
 
 save_best_checkpoint: true

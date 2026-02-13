@@ -29,9 +29,13 @@ learning_rates:
 tensorboard_subdir: "run"
 opacity_loss_weight: 1.0
 
-dynamic_language: true
+dynamic_position: true
 dynamic_scale: true
+dynamic_rotation: true
+dynamic_opacity: false
 dynamic_color: true
+dynamic_language: true
+dynamic_grid: true
 
 coarse_base_iterations: 30 # static rgb splat
 coarse_lang_iterations: 10 # static rgb + language splat
