@@ -1,7 +1,7 @@
 import gc
 import json
 from pathlib import Path
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 import random
 from tqdm import tqdm
 import hydra
@@ -15,138 +15,10 @@ from benchmark.temporal import (
     graph_agent_queries,
 )
 from benchmark.spatial import (
-    get_patched_qwen_for_spatial_grounding,
     dump_spatial_prediction_visualizations,
-    frame_attn_feat_queries,
-    frame_attn_refine_feat_queries,
     frame_direct_feat_queries,
     graph_agent_feat_queries,
 )
-
-def evaluate_triplets(
-    clip: DictConfig,
-    cfg: DictConfig,
-    model,
-    processor,
-):
-    """Run triplet recognition evaluation for a single clip."""
-    if cfg.eval is None or cfg.eval.triplets is None:
-        return
-    
-    from benchmark.triplets import (
-        load_triplet_samples,
-        single_frame_queries,
-        single_frame_mask_overlay_queries,
-        multiframe_queries,
-        multiframe_mask_overlay_queries,
-        graph_agent_single_queries,
-        graph_agent_dynamic_queries,
-    )
-    from benchmark.cholect50_utils import CholecT50Loader
-    
-    print(f"\n{'=' * 80}")
-    print(f"TRIPLETS EVALUATION: {clip.name}")
-    print(f"{'=' * 80}")
-    
-    # Parse video_id and clip_start from clip name (e.g., "video01_00100")
-    clip_name = str(clip.name)
-    try:
-        video_id = int(clip_name.split("_")[0].replace("video", ""))
-        clip_start = int(clip_name.split("_")[1])
-    except Exception as e:
-        print(f"ERROR: Could not parse clip name '{clip_name}': {e}")
-        return
-    
-    # CholecT50 only has annotations for videos 1-50
-    if video_id > 50:
-        print(f"Skipping: CholecT50 annotations only available for videos 1-50 (got video {video_id})")
-        return
-    
-    # Load GT samples
-    video_dir = Path(cfg.preprocessed_root) / clip_name
-    cholect50_loader = CholecT50Loader(str(cfg.cholect50_root))
-    
-    try:
-        samples = load_triplet_samples(
-            video_dir=video_dir,
-            clip_start=clip_start,
-            video_id=video_id,
-            cholect50_loader=cholect50_loader,
-            images_subdir=cfg.eval.paths.images_subdir,
-            framerate=cfg.eval.triplets.FRAMERATE,
-            num_frames=cfg.eval.triplets.NUM_FRAMES,
-            frame_stride=cfg.eval.triplets.frame_stride,
-        )
-    except FileNotFoundError as e:
-        print(f"ERROR: {e}")
-        print("Skipping triplets evaluation for this clip.")
-        return
-    
-    if not samples:
-        print("ERROR: No samples found! Check if preprocessed data is available.")
-        return
-    
-    print(f"Loaded {len(samples)} evaluation samples")
-    
-    # Get graph path if needed
-    graph_path = Path(cfg.output_root) / clip_name / cfg.eval.paths.graph_subdir
-    
-    # Map method names to strategy functions
-    method_map = {
-        "single_frame": single_frame_queries,
-        "single_frame_mask_overlay": single_frame_mask_overlay_queries,
-        "multiframe": multiframe_queries,
-        "multiframe_mask_overlay": multiframe_mask_overlay_queries,
-        "graph_agent_single": graph_agent_single_queries,
-        "graph_agent_dynamic": graph_agent_dynamic_queries,
-    }
-    
-    # Collect predictions for all methods
-    all_results = {}
-    
-    for method_name in cfg.eval.triplets.methods:
-        if method_name not in method_map:
-            print(f"WARNING: Unknown method '{method_name}', skipping")
-            continue
-        
-        print(f"\nRunning method: {method_name}")
-        strategy_fn = method_map[method_name]
-        
-        # Call strategy function (with graph_path for agent methods)
-        if "graph_agent" in method_name:
-            if not graph_path.exists():
-                print(f"  WARNING: Graph not found at {graph_path}, skipping {method_name}")
-                continue
-            results = strategy_fn(
-                model=model,
-                processor=processor,
-                samples=samples,
-                graph_path=graph_path,
-                clip=clip,
-                cfg=cfg,
-            )
-        else:
-            results = strategy_fn(
-                model=model,
-                processor=processor,
-                samples=samples,
-                clip=clip,
-                cfg=cfg,
-            )
-        
-        all_results[method_name] = results
-        
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    
-    # Save per-clip predictions for compute_metrics stage
-    pred_out_dir = Path(cfg.eval.triplets.output_dir)
-    pred_out_dir.mkdir(parents=True, exist_ok=True)
-    pred_out_file = pred_out_dir / f"{clip.name}.json"
-    
-    with pred_out_file.open("w") as f:
-        json.dump({"clip": clip.name, "methods": all_results}, f, indent=2)
 
 
 def evaluate_temporal(
@@ -239,8 +111,6 @@ def get_timestep_from_frame(frame: str, image_dir: Path) -> int:
 def evaluate_spatial(
     clip: DictConfig,
     cfg: DictConfig,
-    model_spatial,
-    processor_spatial,
     model,
     processor,
 ):
@@ -257,8 +127,6 @@ def evaluate_spatial(
     Args:
       model: Pre-loaded Qwen model
       processor: Pre-loaded Qwen processor
-      model_spatial: Pre-loaded patched Qwen model for spatial grounding (attention methods)
-      processor_spatial: Pre-loaded processor for spatial model
     """
     # skip this if no eval config is set
     if cfg.eval is None or cfg.eval.spatial is None:
@@ -283,33 +151,6 @@ def evaluate_spatial(
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-
-    if "frame_attn" in methods_to_run:
-        all_results["frame_attn"] = frame_attn_feat_queries(
-            model=model_spatial,
-            processor=processor_spatial,
-            preprocessed_root=Path(cfg.preprocessed_root),
-            images_subdir=cfg.eval.paths.images_subdir,
-            clip_gt=gt_data,
-            clip=clip,
-            cfg=cfg,
-        )
-        _clear_vram()
-
-    if "frame_attn_refine" in methods_to_run:
-        # 2D attention proposals + refinement via normal Qwen
-        all_results["frame_attn_refine"] = frame_attn_refine_feat_queries(
-            model_spatial=model_spatial,
-            processor_spatial=processor_spatial,
-            model=model,
-            processor=processor,
-            preprocessed_root=Path(cfg.preprocessed_root),
-            images_subdir=cfg.eval.paths.images_subdir,
-            clip_gt=gt_data,
-            clip=clip,
-            cfg=cfg,
-        )
-        _clear_vram()
 
     if "frame_direct" in methods_to_run:
         # Direct Qwen prompting on frame to return a pixel
@@ -344,8 +185,6 @@ def evaluate_spatial(
     # Optional: dump per-(query, layer) visualizations of top-k points on the frame
     if cfg.eval.spatial.dump_visualizations:
         viz_method_names = {
-            "frame_attn": "frame_attn",
-            "frame_attn_refine": "frame_attn_refine",
             "frame_direct": "frame_direct",
             "graph_agent": "graph_agent",
         }
@@ -375,35 +214,15 @@ def main(cfg: DictConfig):
         size=cfg.eval.qwen3_size,
         use_fp8=cfg.eval.qwen3_use_fp8,
     )
-    
-    # Only load spatial attention model if spatial evaluation is enabled
-    model_spatial = None
-    processor_spatial = None
-    if cfg.eval is not None and cfg.eval.spatial is not None:
-        model_spatial, processor_spatial = get_patched_qwen_for_spatial_grounding(
-            size=cfg.eval.qwen3_size,
-            use_fp8=cfg.eval.qwen3_use_fp8,
-        )
 
     for clip in tqdm(cfg.clips, desc="Evaluating clips", unit="clip"):
-        evaluate_triplets(clip, cfg, model=model, processor=processor)
         evaluate_temporal(clip, cfg, model=model, processor=processor)
         evaluate_spatial(
             clip=clip,
             cfg=cfg,
             model=model,
             processor=processor,
-            model_spatial=model_spatial,
-            processor_spatial=processor_spatial,
         )
-
-    # Clean up spatial models if they were loaded
-    if model_spatial is not None:
-        del model_spatial
-        del processor_spatial
-        gc.collect()
-        torch.cuda.empty_cache()
-
 
 if __name__ == "__main__":
     main()

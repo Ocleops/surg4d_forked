@@ -3,7 +3,6 @@ from pathlib import Path
 from omegaconf import DictConfig
 import torch
 import numpy as np
-from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
 from typing import List, Dict, Any, Optional, Callable
 import cv2
 import re
@@ -12,20 +11,14 @@ import json
 from benchmark.graph_utils import get_coord_transformations
 from benchmark.serialization_utils import sanitize_tool_calls
 from llm.qwen_utils import (
-    model_inputs,
-    QWEN_CONSTANTS,
-    get_patch_hw,
     prompt_graph_agent,
     ask_qwen_about_image,
-    qwen3_cat_to_deepstack_multiple,
-    get_patched_qwen3,
 )
 from llm.tools import GraphTools
 from autoencoder.model_qwen import QwenAutoencoder
 from scene.dataset_readers import CameraInfo, readColmapSceneInfo
 from scene.cameras import Camera
 from PIL import Image
-from qwen_vl_utils import process_vision_info
 
 
 def find_image_path(images_dir: Path, frame_number: int) -> Optional[Path]:
@@ -48,254 +41,6 @@ def find_image_path(images_dir: Path, frame_number: int) -> Optional[Path]:
         return png_path
     else:
         return None
-
-
-def get_patched_qwen_for_spatial_grounding(
-    size: str = "32B",
-    use_fp8: bool = False,
-):
-    model, processor = get_patched_qwen3(
-        size=size,
-        use_fp8=use_fp8,
-        attn_implementation="eager",
-    )
-
-    # Enable attention output in model config
-    model.config.output_attentions = True
-    model.model.config.output_attentions = True
-    model.model.language_model.config.output_attentions = True
-
-    return model, processor
-
-
-def extract_text_to_vision_attention(
-    model,
-    processor,
-    vision_features,
-    layers: List[int],
-    prompt: str,
-    substring: str,
-    system_prompt: str,
-    qwen_version: str = "qwen25",
-):
-    """Extract attention scores from substring query tokens to vision tokens across layers.
-
-    Args:
-        model: Qwen VL model (Qwen2.5 or Qwen3)
-        processor: Qwen VL processor
-        vision_features: Vision feature tensor.
-            For qwen25: shape (N, hidden_dim)
-            For qwen3: shape (N, hidden_dim * 4) containing [main | d0 | d1 | d2]
-        layers (List[int]): List of layers to extract attention scores from
-        prompt (str): Prompt to use for the query
-        substring (str): Substring to extract attention scores from
-        qwen_version (str): Either "qwen25" or "qwen3"
-
-    Returns:
-        Dict[str, Any]:
-            - scores: torch.Tensor of shape (num_layers, num_query_tokens, num_vision_tokens)
-            - tokens: List[str] of all decoded tokens for input sequence
-            - query_token_indices: List[int] indices into tokens corresponding to substring span
-            - vision_token_indices: List[int] indices into tokens corresponding to vision placeholders
-    """
-    assert substring in prompt
-
-    # Build a message with an image placeholder and the full prompt
-    messages = [
-        {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
-        {
-            "role": "user",
-            "content": [
-                {"type": "image", "image": None},
-                {"type": "text", "text": prompt},
-            ],
-        },
-    ]
-
-    # Handle Qwen3 concatenated features: split into main + deepstack
-    if qwen_version == "qwen3":
-        main_features, deepstack_features = qwen3_cat_to_deepstack_multiple(
-            [vision_features]
-        )
-        # Prepare inputs using main features for correct token count
-        inputs = model_inputs(
-            messages, main_features, processor, qwen_version=qwen_version
-        ).to(model.device)
-    else:
-        main_features = [vision_features]
-        deepstack_features = None
-        inputs = model_inputs(
-            messages, main_features, processor, qwen_version=qwen_version
-        ).to(model.device)
-
-    # Identify vision token positions via <|image_pad|> before forward (needed for custom pos ids)
-    input_ids = inputs.input_ids[0]
-    image_pad_token = processor.tokenizer.encode(
-        "<|image_pad|>", add_special_tokens=False
-    )[0]
-    image_pad_positions = (input_ids == image_pad_token).nonzero(as_tuple=True)[0]
-    if image_pad_positions.numel() == 0:
-        raise ValueError("No <|image_pad|> tokens found in input sequence.")
-    vision_token_indices = image_pad_positions.tolist()
-
-    with torch.no_grad():
-        # Not generating any output tokens here
-        model_kwargs = dict(
-            output_attentions=True,
-            return_dict=True,
-            custom_patch_features=main_features,
-        )
-        if qwen_version == "qwen3" and deepstack_features is not None:
-            model_kwargs["custom_deepstack_features"] = deepstack_features
-        outputs = model(
-            **inputs,
-            **model_kwargs,
-        )
-
-    all_attn = list(outputs.attentions)
-
-    # vision_token_indices already computed above
-
-    # Map substring to token indices by scanning decoded tokens and locating overlap
-    tokens = [processor.tokenizer.decode([tid]) for tid in input_ids.tolist()]
-    concatenated = "".join(tokens)
-    start_char = concatenated.lower().find(substring.lower())
-    end_char = start_char + len(substring)
-
-    query_token_indices = []
-    cursor = 0
-    for idx, tok in enumerate(tokens):
-        token_start = cursor
-        token_end = cursor + len(tok)
-        if token_start < end_char and token_end > start_char:
-            query_token_indices.append(idx)
-        cursor = token_end
-        if cursor > end_char and len(query_token_indices) > 0:
-            break
-
-    # Collect attention: [L, Q, V], averaged across heads
-    num_layers = len(layers)
-    num_queries = len(query_token_indices)
-    num_vision = len(vision_token_indices)
-    scores = torch.empty((num_layers, num_queries, num_vision), dtype=torch.float32)
-
-    q_idx = torch.tensor(query_token_indices, device=all_attn[0].device)
-    v_idx = torch.tensor(vision_token_indices, device=all_attn[0].device)
-
-    for out_pos, layer_idx in enumerate(layers):
-        layer_attn = all_attn[layer_idx]  # [1, heads, seq, seq]
-        # select queries and vision columns, average heads -> [Q, V]
-        attn_q_to_v = layer_attn[0, :, q_idx, :][:, :, v_idx].mean(
-            dim=0
-        )  # mean over heads
-        scores[out_pos] = attn_q_to_v.detach().to(torch.float32).cpu()
-
-    return {
-        "scores": scores,
-        "tokens": tokens,
-        "query_token_indices": query_token_indices,
-        "vision_token_indices": vision_token_indices,
-    }
-
-
-def extract_text_to_image_attention(
-    model: Qwen2_5_VLForConditionalGeneration,
-    processor: Qwen2_5_VLProcessor,
-    image: Image.Image,
-    layers: List[int],
-    prompt: str,
-    substring: str,
-    system_prompt: str,
-):
-    """Extract attention scores from substring query tokens to image vision tokens across layers.
-
-    Uses the actual image input, not custom patch features. Vision tokens are identified via
-    <|image_pad|> positions in the tokenized sequence.
-    """
-    assert substring in prompt
-
-    messages = [
-        {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
-        {
-            "role": "user",
-            "content": [
-                # Pass actual image so apply_chat_template computes correct token count
-                {"type": "image", "image": image},
-                {"type": "text", "text": prompt},
-            ],
-        },
-    ]
-
-    # Build text with correct image token count
-    text = processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-    # Extract images using process_vision_info to ensure correct format
-    image_inputs, video_inputs = process_vision_info(messages)
-    inputs = processor(
-        text=[text],
-        images=image_inputs,
-        videos=video_inputs,
-        padding=True,
-        return_tensors="pt",
-    ).to(model.device)
-
-    with torch.no_grad():
-        outputs = model(
-            **inputs,
-            output_attentions=True,
-            return_dict=True,
-        )
-
-    all_attn = list(outputs.attentions)
-
-    # Identify vision token positions via <|image_pad|>
-    input_ids = inputs.input_ids[0]
-    image_pad_token = processor.tokenizer.encode(
-        "<|image_pad|>", add_special_tokens=False
-    )[0]
-    image_pad_positions = (input_ids == image_pad_token).nonzero(as_tuple=True)[0]
-    if image_pad_positions.numel() == 0:
-        raise ValueError("No <|image_pad|> tokens found in input sequence.")
-    vision_token_indices = image_pad_positions.tolist()
-
-    # Map substring to token indices
-    tokens = [processor.tokenizer.decode([tid]) for tid in input_ids.tolist()]
-    concatenated = "".join(tokens)
-    start_char = concatenated.lower().find(substring.lower())
-    end_char = start_char + len(substring)
-
-    query_token_indices = []
-    cursor = 0
-    for idx, tok in enumerate(tokens):
-        token_start = cursor
-        token_end = cursor + len(tok)
-        if token_start < end_char and token_end > start_char:
-            query_token_indices.append(idx)
-        cursor = token_end
-        if cursor > end_char and len(query_token_indices) > 0:
-            break
-
-    # Collect attention: [L, Q, V], averaged across heads
-    num_layers = len(layers)
-    num_queries = len(query_token_indices)
-    num_vision = len(vision_token_indices)
-    scores = torch.empty((num_layers, num_queries, num_vision), dtype=torch.float32)
-
-    q_idx = torch.tensor(query_token_indices, device=all_attn[0].device)
-    v_idx = torch.tensor(vision_token_indices, device=all_attn[0].device)
-
-    for out_pos, layer_idx in enumerate(layers):
-        layer_attn = all_attn[layer_idx]  # [1, heads, seq, seq]
-        attn_q_to_v = layer_attn[0, :, q_idx, :][:, :, v_idx].mean(dim=0)
-        scores[out_pos] = attn_q_to_v.detach().to(torch.float32).cpu()
-
-    return {
-        "scores": scores,
-        "tokens": tokens,
-        "query_token_indices": query_token_indices,
-        "vision_token_indices": vision_token_indices,
-    }
 
 
 def project_3d_to_2d(
@@ -404,159 +149,6 @@ def get_proj_matrix_from_timestep(
     return full_proj_matrix, camera.image_width, camera.image_height
 
 
-def splat_predict_query_list(
-    queries_list,
-    *,
-    model,
-    processor,
-    ts_feats,
-    pos_t,
-    layers,
-    top_k,
-    frame_number,
-    clip_name: str,
-    train_cameras,
-    prompt_template: str,
-    system_prompt: str,
-    point_n2o: Callable[[np.ndarray], np.ndarray],
-    qwen_version: str = "qwen25",
-):
-    outputs = []
-    frame_idx = int(frame_number)
-    frame_name = f"frame_{frame_idx:06d}.jpg"
-    proj_matrix, img_width, img_height = get_proj_matrix_from_timestep(
-        frame_idx, train_cameras, frame_name
-    )
-
-    feats_tensor = torch.tensor(ts_feats, device=model.device)
-    for query in queries_list:
-        substring = query["query"]
-        prompt = prompt_template.format(substring=substring)
-        if feats_tensor.shape[0] == 0:
-            out_item = {"query": substring, "predictions": {}}
-            for layer in layers:
-                out_item["predictions"][layer] = {
-                    "scores": [],
-                    "pixel_coords": [],
-                    "positions": [],
-                }
-            outputs.append(out_item)
-            continue
-        attn_out = extract_text_to_vision_attention(
-            model=model,
-            processor=processor,
-            vision_features=feats_tensor,
-            layers=layers,
-            prompt=prompt,
-            substring=substring,
-            system_prompt=system_prompt,
-            qwen_version=qwen_version,
-        )
-        attn_scores = attn_out["scores"]
-
-        out_item = {"query": substring, "predictions": {}}
-        for layer_idx, layer in enumerate(layers):
-            layer_scores = attn_scores[layer_idx]
-            layer_scores = layer_scores.mean(dim=0)
-            top_scores, top_indices = layer_scores.topk(k=top_k, sorted=True)
-            top_scores = top_scores.detach().cpu().numpy()
-            top_indices = top_indices.detach().cpu().numpy()
-
-            # Directly index positions by attention-ranked indices
-            top_positions = pos_t[top_indices]
-
-            # Convert back to original coordinates for projection
-            top_positions_original = point_n2o(top_positions)
-            top_pixels = project_3d_to_2d(
-                top_positions_original, proj_matrix, img_width, img_height
-            )
-
-            out_item["predictions"][layer] = {
-                "scores": top_scores.tolist(),
-                "pixel_coords": top_pixels.tolist(),
-                "positions": top_positions.tolist(),
-            }
-        outputs.append(out_item)
-    return outputs
-
-
-def splat_feat_queries(
-    model,
-    processor,
-    splat_feats,
-    splat_indices,
-    positions,
-    clip_gt,
-    clip: DictConfig,
-    cfg: DictConfig,
-):
-    # load cameras
-    scene_info = readColmapSceneInfo(
-        Path(cfg.preprocessed_root) / clip.name, images=None, eval=False
-    )
-    train_cameras = scene_info.train_cameras
-
-    # Compute coordinate transformations and normalize positions
-    point_o2n, point_n2o, _, _ = get_coord_transformations(positions)
-    positions_normalized = point_o2n(positions)
-
-    results = {}
-    splat_system_prompt = cfg.eval.spatial.splat_system_prompt
-
-    for timestep, timestep_queries in clip_gt.items():
-        t = int(timestep)
-        ts_feats = splat_feats[t]
-        pos_t = positions_normalized[t][splat_indices]
-
-        results[timestep] = {"objects": [], "actions": []}
-
-        layers = cfg.eval.spatial.layers
-        top_k = cfg.eval.spatial.top_k_scores
-        frame_number = timestep_queries["frame_number"]
-        prompt_template = cfg.eval.spatial.splat_prompt_template
-
-        results[timestep]["objects"] = splat_predict_query_list(
-            timestep_queries.get("objects", []),
-            model=model,
-            processor=processor,
-            ts_feats=ts_feats,
-            pos_t=pos_t,
-            layers=layers,
-            top_k=top_k,
-            frame_number=frame_number,
-            clip_name=clip.name,
-            train_cameras=train_cameras,
-            prompt_template=prompt_template,
-            system_prompt=splat_system_prompt,
-            point_n2o=point_n2o,
-            qwen_version=cfg.eval.qwen_version,
-        )
-
-        results[timestep]["actions"] = splat_predict_query_list(
-            timestep_queries.get("actions", []),
-            model=model,
-            processor=processor,
-            ts_feats=ts_feats,
-            pos_t=pos_t,
-            layers=layers,
-            top_k=top_k,
-            frame_number=frame_number,
-            clip_name=clip.name,
-            train_cameras=train_cameras,
-            prompt_template=prompt_template,
-            system_prompt=splat_system_prompt,
-            point_n2o=point_n2o,
-            qwen_version=cfg.eval.qwen_version,
-        )
-
-        # Clear VRAM after each timestep to prevent OOM
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-    return results
-
-
 def _parse_point_from_json(text: str) -> Optional[List[float]]:
     """Extract a single 3D point [x, y, z] from a JSON object in the given text.
 
@@ -586,31 +178,6 @@ def _parse_point_from_json(text: str) -> Optional[List[float]]:
     return None
 
 
-def _pixels_to_qwen3_coords(
-    pixels: np.ndarray, img_width: int, img_height: int
-) -> np.ndarray:
-    """Convert pixel coordinates to Qwen3's normalized [0, 1000] coordinate system.
-    
-    Args:
-        pixels: Array of shape (N, 2) with [x, y] pixel coordinates
-        img_width: Original image width in pixels
-        img_height: Original image height in pixels
-    
-    Returns:
-        Array of shape (N, 2) with [x, y] in [0, 1000] range
-    """
-    pixels_array = np.array(pixels)
-    if pixels_array.ndim == 1:
-        pixels_array = pixels_array.reshape(1, -1)
-    
-    # Normalize to [0, 1] then scale to [0, 1000]
-    normalized = pixels_array.copy()
-    normalized[:, 0] = (pixels_array[:, 0] / img_width) * 1000.0
-    normalized[:, 1] = (pixels_array[:, 1] / img_height) * 1000.0
-    
-    return normalized
-
-
 def _qwen3_coords_to_pixels(
     coords: np.ndarray, img_width: int, img_height: int
 ) -> np.ndarray:
@@ -638,7 +205,6 @@ def _qwen3_coords_to_pixels(
 
 def _parse_pixel_from_json(
     text: str,
-    qwen_version: str = "qwen25",
     img_width: Optional[int] = None,
     img_height: Optional[int] = None,
 ) -> Optional[List[float]]:
@@ -648,7 +214,6 @@ def _parse_pixel_from_json(
     
     Args:
         text: Response text containing JSON coordinates
-        qwen_version: Either "qwen25" or "qwen3"
         img_width: Image width in pixels (required for qwen3)
         img_height: Image height in pixels (required for qwen3)
     
@@ -672,16 +237,14 @@ def _parse_pixel_from_json(
                 
                 if coords is not None:
                     # For Qwen3, coordinates are in [0, 1000] and need to be scaled back
-                    if qwen_version == "qwen3":
-                        if img_width is None or img_height is None:
-                            raise ValueError(
-                                "img_width and img_height required for qwen3 coordinate conversion"
-                            )
-                        coords_array = _qwen3_coords_to_pixels(
-                            np.array(coords), img_width, img_height
+                    if img_width is None or img_height is None:
+                        raise ValueError(
+                            "img_width and img_height required for qwen3 coordinate conversion"
                         )
-                        return coords_array.flatten().tolist()
-                    return coords
+                    coords_array = _qwen3_coords_to_pixels(
+                        np.array(coords), img_width, img_height
+                    )
+                    return coords_array.flatten().tolist()
     except Exception:
         pass
 
@@ -747,7 +310,6 @@ def graph_agent_predict_query_list(
             model=model,
             processor=processor,
             tools=tools,
-            qwen_version="qwen3",  # Required for agentic mode
             system_prompt=system_prompt,
             max_iterations=max_iterations,
             tool_call_limits=tool_call_limits,
@@ -980,302 +542,6 @@ def graph_agent_feat_queries(
     return results
 
 
-def _patch_indices_to_pixel_centers(
-    patch_indices: np.ndarray, img_h: int, img_w: int, qwen_version: str = "qwen25"
-) -> np.ndarray:
-    """Map flat patch indices (row-major) to pixel centers in the original image.
-
-    Returns array of shape (N, 2) with (x, y) in pixel coordinates.
-    """
-    effective_patch_size = QWEN_CONSTANTS[qwen_version]["effective_patch_size"]
-    ph, pw = get_patch_hw(img_h, img_w, qwen_version)
-    cols = patch_indices % pw
-    rows = patch_indices // pw
-    xs = (cols + 0.5) * effective_patch_size
-    ys = (rows + 0.5) * effective_patch_size
-    xs = np.clip(xs, 0, img_w - 1)
-    ys = np.clip(ys, 0, img_h - 1)
-    return np.stack([xs, ys], axis=-1)
-
-
-def frame_attn_predict_query_list(
-    queries_list,
-    *,
-    model,
-    processor,
-    max_proposals: int,
-    image: Image.Image,
-    layers: List[int],
-    prompt_template: str,
-    system_prompt: str,
-    qwen_version: str = "qwen25",
-):
-    outputs = []
-    for query in queries_list:
-        substring = query["query"]
-        prompt = prompt_template.format(substring=substring)
-        attn_out = extract_text_to_image_attention(
-            model=model,
-            processor=processor,
-            image=image,
-            layers=layers,
-            prompt=prompt,
-            substring=substring,
-            system_prompt=system_prompt,
-        )
-        attn_scores = attn_out["scores"]  # [L, Q, V]
-
-        out_item = {"query": substring, "predictions": {}}
-        for layer_idx, layer in enumerate(layers):
-            layer_scores = attn_scores[layer_idx]  # [Q, V]
-            layer_scores = layer_scores.mean(dim=0)  # [V]
-            top_scores, top_indices = layer_scores.topk(k=max_proposals, sorted=True)
-            top_scores = top_scores.detach().cpu().numpy()
-            top_indices = top_indices.detach().cpu().numpy()
-
-            # Map patch indices to pixel centers
-            pixels = _patch_indices_to_pixel_centers(
-                top_indices, image.height, image.width, qwen_version=qwen_version
-            )
-
-            out_item["predictions"][layer] = {
-                "scores": top_scores.tolist(),
-                "pixel_coords": pixels.tolist(),
-            }
-        outputs.append(out_item)
-    return outputs
-
-
-def frame_attn_refine_predict_query_list(
-    queries_list,
-    *,
-    model_spatial,
-    processor_spatial,
-    model,
-    processor,
-    image: Image.Image,
-    attn_layer: int,
-    top_k: int,
-    prompt_template_attn: str,
-    system_prompt_attn: str,
-    prompt_template_refine: str,
-    system_prompt_refine: str,
-    include_scores_in_context: bool = False,
-    qwen_version: str = "qwen25",
-):
-    outputs = []
-    for query in queries_list:
-        substring = query["query"]
-        prompt_attn = prompt_template_attn.format(substring=substring)
-        attn_out = extract_text_to_image_attention(
-            model=model_spatial,
-            processor=processor_spatial,
-            image=image,
-            layers=[attn_layer],
-            prompt=prompt_attn,
-            substring=substring,
-            system_prompt=system_prompt_attn,
-        )
-        attn_scores = attn_out["scores"]  # [1, Q, V]
-        layer_scores = attn_scores[0].mean(dim=0)  # [V]
-        top_scores, top_indices = layer_scores.topk(k=top_k, sorted=True)
-        top_indices_np = top_indices.detach().cpu().numpy()
-        top_scores_np = top_scores.detach().cpu().numpy()
-
-        # Map patch indices to pixel centers
-        pixels = _patch_indices_to_pixel_centers(
-            top_indices_np, image.height, image.width, qwen_version=qwen_version
-        )
-
-        # Prepare refine prompt with proposals
-        question = prompt_template_refine.format(substring=substring)
-        if pixels.shape[0] > 0:
-            # For Qwen3, convert pixel proposals to [0, 1000] coordinate system
-            if qwen_version == "qwen3":
-                pixels_for_prompt = _pixels_to_qwen3_coords(
-                    pixels, image.width, image.height
-                )
-            else:
-                pixels_for_prompt = pixels
-            
-            if include_scores_in_context:
-                lines = [
-                    "Candidate pixel proposals (x, y) with attention scores:",
-                    *[
-                        f"- {float(p[0]):.1f}, {float(p[1]):.1f} (score={float(s):.4f}, rank={i + 1})"
-                        for i, (p, s) in enumerate(zip(pixels_for_prompt, top_scores_np))
-                    ],
-                ]
-            else:
-                lines = [
-                    "Candidate pixel proposals (x, y):",
-                    *[f"- {float(p[0]):.1f}, {float(p[1]):.1f}" for p in pixels_for_prompt],
-                ]
-            question = question + "\n\n" + "\n".join(lines)
-
-        response = ask_qwen_about_image(
-            image=image,
-            prompt=question,
-            model=model,
-            processor=processor,
-            system_prompt=system_prompt_refine,
-        )
-
-        px = _parse_pixel_from_json(
-            response,
-            qwen_version=qwen_version,
-            img_width=image.width,
-            img_height=image.height,
-        )
-        if px is None:
-            # fallback to the top-1 proposal
-            if pixels.shape[0] > 0:
-                px = [float(pixels[0, 0]), float(pixels[0, 1])]
-            else:
-                px = [0.0, 0.0]
-
-        out_item = {"query": substring, "predictions": {}, "raw_response": response}
-        out_item["predictions"]["0"] = {
-            "pixel_coords": [px],
-        }
-        outputs.append(out_item)
-    return outputs
-
-
-def frame_attn_refine_feat_queries(
-    *,
-    model_spatial,
-    processor_spatial,
-    model,
-    processor,
-    preprocessed_root: Path | str,
-    images_subdir: str,
-    clip_gt: Dict[str, Any],
-    clip: DictConfig,
-    cfg: DictConfig,
-):
-    results: Dict[str, Any] = {}
-    images_dir = Path(preprocessed_root) / clip.name / images_subdir
-
-    attn_layer = cfg.eval.spatial.frame_attn_refine_attn_layer
-    prompt_template_attn = cfg.eval.spatial.frame_attn_prompt_template
-    system_prompt_attn = cfg.eval.spatial.frame_attn_system_prompt
-    prompt_template_refine = cfg.eval.spatial.frame_attn_refine_prompt_template
-    system_prompt_refine = cfg.eval.spatial.frame_attn_refine_system_prompt
-    include_scores = cfg.eval.spatial.frame_attn_refine_include_scores_in_context
-
-    for timestep, timestep_queries in clip_gt.items():
-        frame_number = int(timestep_queries["frame_number"])  # local idx
-        frame_path = find_image_path(images_dir, frame_number)
-        if frame_path is None:
-            continue
-        image = Image.open(frame_path).convert("RGB")
-
-        results[timestep] = {"objects": [], "actions": []}
-
-        results[timestep]["objects"] = frame_attn_refine_predict_query_list(
-            timestep_queries.get("objects", []),
-            model_spatial=model_spatial,
-            processor_spatial=processor_spatial,
-            model=model,
-            processor=processor,
-            image=image,
-            attn_layer=attn_layer,
-            top_k=cfg.eval.spatial.frame_attn_refine_max_proposals,
-            prompt_template_attn=prompt_template_attn,
-            system_prompt_attn=system_prompt_attn,
-            prompt_template_refine=prompt_template_refine,
-            system_prompt_refine=system_prompt_refine,
-            include_scores_in_context=include_scores,
-            qwen_version=cfg.eval.qwen_version,
-        )
-
-        results[timestep]["actions"] = frame_attn_refine_predict_query_list(
-            timestep_queries.get("actions", []),
-            model_spatial=model_spatial,
-            processor_spatial=processor_spatial,
-            model=model,
-            processor=processor,
-            image=image,
-            attn_layer=attn_layer,
-            top_k=cfg.eval.spatial.frame_attn_refine_max_proposals,
-            prompt_template_attn=prompt_template_attn,
-            system_prompt_attn=system_prompt_attn,
-            prompt_template_refine=prompt_template_refine,
-            system_prompt_refine=system_prompt_refine,
-            include_scores_in_context=include_scores,
-            qwen_version=cfg.eval.qwen_version,
-        )
-
-        # Clear VRAM after each timestep to prevent OOM
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-    return results
-
-
-def frame_attn_feat_queries(
-    *,
-    model,
-    processor,
-    preprocessed_root: Path | str,
-    images_subdir: str,
-    clip_gt: Dict[str, Any],
-    clip: DictConfig,
-    cfg: DictConfig,
-):
-    """Run 2D frame attention baseline across all queries for a clip.
-
-    Uses text-to-vision attention on the original frame and maps top-k patches to pixel centers.
-    """
-    results: Dict[str, Any] = {}
-    images_dir = Path(preprocessed_root) / clip.name / images_subdir
-    layers = cfg.eval.spatial.layers
-    prompt_template = cfg.eval.spatial.frame_attn_prompt_template
-    system_prompt = cfg.eval.spatial.frame_attn_system_prompt
-
-    for timestep, timestep_queries in clip_gt.items():
-        frame_number = int(timestep_queries["frame_number"])  # local idx
-        frame_path = find_image_path(images_dir, frame_number)
-        if frame_path is None:
-            continue
-        image = Image.open(frame_path).convert("RGB")
-
-        results[timestep] = {"objects": [], "actions": []}
-
-        results[timestep]["objects"] = frame_attn_predict_query_list(
-            timestep_queries.get("objects", []),
-            model=model,
-            processor=processor,
-            image=image,
-            layers=layers,
-            max_proposals=cfg.eval.spatial.frame_attn_refine_max_proposals,
-            prompt_template=prompt_template,
-            system_prompt=system_prompt,
-            qwen_version=cfg.eval.qwen_version,
-        )
-
-        results[timestep]["actions"] = frame_attn_predict_query_list(
-            timestep_queries.get("actions", []),
-            model=model,
-            processor=processor,
-            image=image,
-            layers=layers,
-            max_proposals=cfg.eval.spatial.frame_attn_refine_max_proposals,
-            prompt_template=prompt_template,
-            system_prompt=system_prompt,
-            qwen_version=cfg.eval.qwen_version,
-        )
-
-        # Clear VRAM after each timestep to prevent OOM
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-    return results
-
-
 def frame_direct_predict_query_list(
     queries_list,
     *,
@@ -1284,7 +550,6 @@ def frame_direct_predict_query_list(
     image: Image.Image,
     prompt_template: str,
     system_prompt: str,
-    qwen_version: str = "qwen25",
 ):
     outputs = []
     for query in queries_list:
@@ -1301,7 +566,6 @@ def frame_direct_predict_query_list(
 
         px = _parse_pixel_from_json(
             response,
-            qwen_version=qwen_version,
             img_width=image.width,
             img_height=image.height,
         )
@@ -1349,7 +613,6 @@ def frame_direct_feat_queries(
             image=image,
             prompt_template=prompt_template,
             system_prompt=system_prompt,
-            qwen_version=cfg.eval.qwen_version,
         )
 
         results[timestep]["actions"] = frame_direct_predict_query_list(
@@ -1359,7 +622,6 @@ def frame_direct_feat_queries(
             image=image,
             prompt_template=prompt_template,
             system_prompt=system_prompt,
-            qwen_version=cfg.eval.qwen_version,
         )
 
         # Clear VRAM after each timestep to prevent OOM

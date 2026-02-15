@@ -22,7 +22,7 @@ da3_pc_pixel_stride: 3 # stride for subsampling point cloud pixels (e.g., 3 = ev
 da3_densify_ratio: 1 # densification ratio: multiply points by this factor (copies with noise)
 da3_edge_gradient_threshold: 0.1 # absolute gradient threshold in meters per pixel for filtering edge floaters. Set to null to disable.
 
-verbose_output: false # keep intermediate output files (mostly vipe)
+verbose_output: false # keep intermediate output files
 pc_ply_visualization_filename: pointcloud_viz.ply # set to None to disable
 
 # instance mask conversion

@@ -207,8 +207,7 @@ def main():
     all_ds2_feats = []
     all_labels = []
 
-    qwen_version = "qwen3"
-    factor = QWEN_CONSTANTS[qwen_version]["effective_patch_size"]
+    factor = QWEN_CONSTANTS["qwen3"]["effective_patch_size"]
 
     for frame_idx in sample_indices:
         frame_stem = f"{frame_idx:06d}"
@@ -220,7 +219,7 @@ def main():
         # Get image dimensions
         img_path = list(images_dir.glob(f"frame_{frame_stem}.*"))[0]
         img = Image.open(img_path)
-        patch_h, patch_w = get_patch_hw(img.height, img.width, qwen_version)
+        patch_h, patch_w = get_patch_hw(img.height, img.width)
         n_patches = patch_h * patch_w
         
         logger.info(

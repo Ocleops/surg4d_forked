@@ -18,7 +18,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from llm.qwen_utils import (
-    get_patched_qwen,
+    get_patched_qwen3,
     ask_qwen_about_image_features,
 )
 from autoencoder.model_qwen import QwenAutoencoder
@@ -50,9 +50,6 @@ GLOBAL_AE_CHECKPOINT_DIR = "global_autoencoder"
 # Autoencoder dimensions
 FULL_DIM = 16384  # 4096 * 4 (main + 3 deepstack layers concatenated)
 LATENT_DIM = 3
-
-# Qwen version to use
-QWEN_VERSION = "qwen3"
 
 # ============================================================================
 
@@ -181,7 +178,7 @@ def main(cfg: DictConfig):
 
     # Load Qwen model and processor
     print("Loading Qwen model...")
-    model, processor = get_patched_qwen(qwen_version=QWEN_VERSION)
+    model, processor = get_patched_qwen3(size=cfg.eval.qwen3_size, use_fp8=cfg.eval.qwen3_use_fp8)
     device = model.device
     print(f"Qwen model loaded on {device}")
 
@@ -233,7 +230,6 @@ def main(cfg: DictConfig):
             model=model,
             processor=processor,
             system_prompt=SYSTEM_PROMPT,
-            qwen_version=QWEN_VERSION,
         )
         print(f"GT answer: {gt_answer[:200]}...")
 
@@ -246,7 +242,6 @@ def main(cfg: DictConfig):
             model=model,
             processor=processor,
             system_prompt=SYSTEM_PROMPT,
-            qwen_version=QWEN_VERSION,
         )
         print(f"GT permuted answer: {gt_permuted_answer[:200]}...")
 
@@ -271,7 +266,6 @@ def main(cfg: DictConfig):
                 model=model,
                 processor=processor,
                 system_prompt=SYSTEM_PROMPT,
-                qwen_version=QWEN_VERSION,
             )
             print(f"Clip-specific AE answer: {clip_ae_answer[:200]}...")
 
@@ -287,7 +281,6 @@ def main(cfg: DictConfig):
             model=model,
             processor=processor,
             system_prompt=SYSTEM_PROMPT,
-            qwen_version=QWEN_VERSION,
         )
         print(f"Global AE answer: {global_ae_answer[:200]}...")
 

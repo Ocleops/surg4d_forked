@@ -1,5 +1,5 @@
 defaults:
-  - clips: final_dataset
+  - clips: final_dataset_first
   - preprocessing: qwen3
   - feature_extraction: qwen3
   - autoencoder: qwen3

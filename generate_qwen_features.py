@@ -16,8 +16,6 @@ def extract_qwen_features(
     model,
     processor,
 ):
-    qwen_version = cfg.feature_extraction.qwen_version
-
     clip_dir = Path(cfg.preprocessed_root) / clip.name
     img_dir = clip_dir / "images"
     seg_dir = clip_dir / (
@@ -85,7 +83,7 @@ def main(cfg: DictConfig):
         use_fp8=cfg.feature_extraction.qwen3_use_fp8,
     )
 
-    for clip in tqdm(cfg.clips, desc=f"Generating {cfg.feature_extraction.qwen_version} feats", unit="clip"):
+    for clip in tqdm(cfg.clips, desc=f"Generating {cfg.feature_extraction.qwen3_size} feats", unit="clip"):
         extract_qwen_features(clip, cfg, model, processor)
 
 

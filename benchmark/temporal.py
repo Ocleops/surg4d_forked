@@ -352,7 +352,6 @@ def multiframe_queries(
             image_paths=selected_frames,
             model=model,
             processor=processor,
-            qwen_version=cfg.eval.qwen_version,
             system_prompt=system_prompt,
             fps=effective_fps,
         )
@@ -401,11 +400,11 @@ def multiframe_queries(
 def graph_agent_queries(
     model,
     processor,
-    video_frames: List[Path],
     graph_path: Path,
     annotations: List[Dict],
     clip: "DictConfig",
     cfg: "DictConfig",
+    video_frames: List[Path] = None, # not used in this function, but required for compatibility with other functions
 ) -> List[Dict]:
     """Run graph agent temporal queries with tools.
     
@@ -416,7 +415,6 @@ def graph_agent_queries(
     Args:
         model: Qwen VL model (must be qwen3)
         processor: Qwen VL processor
-        video_frames: List of video frame paths (not used - graph provides info)
         graph_path: Path to graph directory
         annotations: List of query annotations
         clip: Clip config
@@ -425,8 +423,6 @@ def graph_agent_queries(
     Returns:
         List of result dicts
     """
-    assert cfg.eval.qwen_version == "qwen3", "graph_agent requires qwen3 for agentic tool use"
-    
     # Load required graph artifacts
     node_feats_npz_path = graph_path / "c_qwen_feats.npz"
     centers_path = graph_path / "c_centers.npy"
@@ -559,7 +555,6 @@ def graph_agent_queries(
             model=model,
             processor=processor,
             tools=tools,
-            qwen_version=cfg.eval.qwen_version,
             system_prompt=system_prompt,
             max_iterations=cfg.eval.temporal.graph_agent_max_iterations,
             tool_call_limits=tool_call_limits,

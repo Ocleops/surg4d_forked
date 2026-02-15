@@ -1,10 +1,7 @@
 defaults:
-  # - triplets: default
   - temporal: default
   - spatial: default
   - _self_
-
-triplets: null
 
 # qwen
 qwen3_size: ${feature_extraction.qwen3_size}

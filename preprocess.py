@@ -311,24 +311,6 @@ def colmap_txt_to_bin(clip: DictConfig, cfg: DictConfig):
 def delete_unused_files(clip: DictConfig, cfg: DictConfig):
     clip_dir = Path(cfg.preprocessed_root) / clip.name
 
-    # vipe internals
-    if (clip_dir / "intrinsics").exists():
-        shutil.rmtree(clip_dir / "intrinsics")
-    if (clip_dir / "mask").exists():
-        shutil.rmtree(clip_dir / "mask")
-    if (clip_dir / "pose").exists():
-        shutil.rmtree(clip_dir / "pose")
-    if (clip_dir / "vipe").exists():
-        shutil.rmtree(clip_dir / "vipe")
-    if (clip_dir / "vipe" / "rgb_info.pkl").exists():
-        (clip_dir / "vipe" / "rgb_info.pkl").unlink()
-    if (clip_dir / "vipe" / "rgb_slam_map.pt").exists():
-        (clip_dir / "vipe" / "rgb_slam_map.pt").unlink()
-
-    # vipe aux vis
-    if (clip_dir / "vipe_aux_vis").exists():
-        shutil.rmtree(clip_dir / "vipe_aux_vis")
-
     # colmap txt version
     if (clip_dir / "cameras.txt").exists():
         (clip_dir / "cameras.txt").unlink()
@@ -464,18 +446,8 @@ def process_clip(clip: DictConfig, cfg: DictConfig):
             delete_unused_files(clip, cfg)
 
 
-def main():
-    # do hydra init manually here to avoid conflicts with vipe hydra
-    config_dir = Path(__file__).parent / "conf"
-    with hydra.initialize_config_dir(
-        config_dir=str(config_dir.resolve()), version_base="1.3"
-    ):
-        overrides = sys.argv[1:]
-        cfg = hydra.compose("config.yaml", overrides=overrides)
-
-    # Clear after composing the main config so vipe can initialize its own
-    GlobalHydra.instance().clear()
-
+@hydra.main(config_path="conf", config_name="config.yaml", version_base="1.3")
+def main(cfg: DictConfig):
     out_dir = Path(cfg.preprocessed_root)
     out_dir.mkdir(parents=True, exist_ok=True)
 
