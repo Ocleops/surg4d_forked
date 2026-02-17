@@ -9,7 +9,6 @@ No tools are used - the model directly processes Gaussian features with spatial 
 import gc
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
 import numpy as np
 import torch
 from omegaconf import DictConfig
@@ -25,6 +24,7 @@ from benchmark.spatial import (
 from benchmark.serialization_utils import parse_json
 from autoencoder.model_qwen import QwenAutoencoder
 from scene.dataset_readers import readColmapSceneInfo
+from benchmark.temporal import seconds_to_timestep
 
 from llm.qwen_utils import (
     qwen3_cat_to_deepstack_multiple,
@@ -1043,6 +1043,289 @@ def splat_grid_feat_queries(
             "query": question,
             "predicted": [px, py],
             "predicted_qwen3coords": [x, y],
+            "raw_response": response,
+            "message_history": [],
+            "tool_calls": [],
+        })
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    # Cleanup autoencoder
+    del autoencoder
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return results
+
+
+def splat_grid_temporal_queries(
+    model,
+    processor,
+    graph_path: Path | str,
+    annotations: List[Dict[str, Any]],
+    clip: DictConfig,
+    cfg: DictConfig,
+    video_frames: List = None,  # unused, kept for interface compatibility
+) -> List[Dict[str, Any]]:
+    """Run temporal queries using 3D Gaussian-to-grid positional encoding (splat_grid method).
+
+    For each annotation, processes ALL timesteps as a video of Gaussian tokens.
+    Each timestep's Gaussians are projected, sampled, filtered, decoded, then combined
+    into a video-mode input for generate_with_vision_features_3d.
+
+    Args:
+        model: CustomQwen3VLForConditionalGeneration3D model instance
+        processor: Qwen3VLProcessor instance
+        graph_path: Path to graph directory containing Gaussian data
+        annotations: List of annotation dicts with id, type, query
+        clip: Clip configuration
+        cfg: Full Hydra configuration
+        video_frames: Unused, kept for interface compatibility with other temporal methods
+
+    Returns:
+        List of result dicts matching the temporal eval pipeline format.
+    """
+    graph_path = Path(graph_path)
+
+    # Load Gaussian data
+    positions = np.load(graph_path / "positions.npy")  # (timesteps, N, 3)
+    patch_latents = np.load(graph_path / "patch_latents_through_time.npy")  # (timesteps, N, lang_dim)
+    opacities = np.load(graph_path / "opacities_through_time.npy")  # (timesteps, N)
+    logger.info(
+        f"Loaded Gaussian data: positions={positions.shape}, "
+        f"patch_latents={patch_latents.shape}, opacities={opacities.shape}"
+    )
+
+    # Load autoencoder
+    if cfg.eval.temporal.splat_grid_use_global_autoencoder:
+        autoencoder_path = (
+            Path(cfg.preprocessed_root)
+            / cfg.eval.temporal.splat_grid_global_autoencoder_checkpoint_dir
+            / "best_ckpt.pth"
+        )
+    else:
+        autoencoder_path = (
+            Path(cfg.preprocessed_root)
+            / clip.name
+            / cfg.eval.temporal.splat_grid_autoencoder_checkpoint_subdir
+            / "best_ckpt.pth"
+        )
+    autoencoder = QwenAutoencoder(
+        input_dim=cfg.eval.temporal.splat_grid_autoencoder_full_dim,
+        latent_dim=cfg.eval.temporal.splat_grid_autoencoder_latent_dim,
+    ).to(model.device)
+    autoencoder.load_state_dict(
+        torch.load(autoencoder_path, map_location=model.device)
+    )
+    autoencoder.eval()
+
+    decode_batch_size = cfg.eval.temporal.splat_grid_decode_batch_size
+
+    # Grid mapping config
+    patch_size = cfg.eval.temporal.splat_grid_gaussian_patch_size
+    gaussian_sample_ratio = cfg.eval.temporal.splat_grid_gaussian_sample_ratio
+    opacity_threshold = cfg.eval.temporal.splat_grid_opacity_threshold
+    temporal_patch_size = cfg.eval.temporal.splat_grid_temporal_patch_size
+
+    # Timestep range for the full clip
+    n_timesteps = cfg.eval.n_timesteps
+    t1 = 0
+    t2 = n_timesteps - 1
+    frame_numbers_step = cfg.eval.annotation_stride
+
+    # Cameras for projection
+    scene_info = readColmapSceneInfo(
+        Path(cfg.preprocessed_root) / clip.name, images=None, eval=False
+    )
+    train_cameras = scene_info.train_cameras
+
+    system_prompt = cfg.eval.temporal.splat_grid_system_prompt
+
+    # Pre-compute Gaussian data for all timesteps (shared across queries)
+    logger.info(f"Pre-computing Gaussian data for timesteps {t1}-{t2}...")
+
+    # Calculate effective FPS based on stride (matching multiframe_queries)
+    # Original video is at video_fps, but we sample every stride frames
+    effective_fps = cfg.eval.video_fps / cfg.eval.annotation_stride
+
+    # Set VideoMetadata for the processor
+    # total_num_frames accounts for temporal patch size (model processes more frames after patching)
+    # fps should reflect actual video timing, so use effective_fps * temporal_patch_size
+    # This ensures: duration = total_num_frames / fps = (n_timesteps * temporal_patch_size) / (effective_fps * temporal_patch_size) = n_timesteps / effective_fps
+    processor.video_processor.video_metadata = VideoMetadata(
+        total_num_frames=(t2 - t1 + 1) * temporal_patch_size,
+        fps=effective_fps * temporal_patch_size,
+        frames_indices=list(range(t1, (t2 * temporal_patch_size) + 1)),
+    )
+
+    gaussian_features_all = []
+    gaussian_to_grid_mapping_all = []
+    frame_grid_thw_all = []
+
+    f1 = t1 * frame_numbers_step
+    f2 = t2 * frame_numbers_step
+
+    for t, frame_number in zip(range(t1, t2 + 1), range(f1, f2 + 1, frame_numbers_step)):
+        gaussian_means_t = positions[t]  # (N, 3)
+        frame_name = f"frame_{int(frame_number):06d}.jpg"
+
+        proj_matrix, img_width, img_height = get_proj_matrix_from_timestep(
+            int(frame_number), train_cameras, frame_name
+        )
+
+        gaussian_means_t_projected = project_3d_to_2d(
+            gaussian_means_t, proj_matrix, img_width, img_height
+        )
+        gaussian_means_t_projected = np.hstack(
+            (gaussian_means_t_projected, np.ones((gaussian_means_t_projected.shape[0], 1)))
+        )
+        gaussian_feats_t = torch.tensor(
+            patch_latents[t], dtype=torch.float32, device=model.device
+        )
+
+        # Sample
+        gaussian_means_sampled, gaussian_feats_sampled, sample_indices = sample_gaussians(
+            gaussian_means_t,
+            gaussian_features=gaussian_feats_t,
+            sample_ratio=gaussian_sample_ratio,
+            seed=42,
+        )
+        gaussian_means_sampled_projected = gaussian_means_t_projected[sample_indices]
+
+        # Compute grid
+        image_grid_thw, min_x, min_y = compute_gaussian_grid_thw(
+            gaussian_means_sampled_projected, img_height, img_width, patch_size=patch_size
+        )
+
+        # Gaussian-to-grid mapping
+        gaussian_to_grid_mapping, sorted_indices = create_gaussian_to_grid_mapping(
+            gaussian_means_sampled_projected,
+            image_grid_thw,
+            patch_size=patch_size,
+            min_x=0, min_y=0,
+            max_x=img_width - 1, max_y=img_height - 1,
+        )
+
+        # Sort
+        gaussian_to_grid_mapping = gaussian_to_grid_mapping[sorted_indices]
+        gaussian_means_sampled_sorted = gaussian_means_sampled[sorted_indices]
+        gaussian_feats_sampled = gaussian_feats_sampled[sorted_indices]
+
+        # Depth & opacity
+        depth = gaussian_means_sampled_sorted[:, 2]
+        opacity = opacities[t][sample_indices][sorted_indices]
+
+        # Filter
+        filtered_indices = filter_gaussian_tokens(
+            gaussian_to_grid_mapping, depth, opacity, opacity_threshold,
+            image_grid_thw[0, 1], image_grid_thw[0, 2],
+        )
+        gaussian_to_grid_mapping = gaussian_to_grid_mapping[filtered_indices]
+        gaussian_feats_sampled = gaussian_feats_sampled[filtered_indices]
+
+        # Decode latents
+        decoded_t_list = []
+        with torch.no_grad():
+            for batch_start in range(0, len(gaussian_feats_sampled), decode_batch_size):
+                batch = gaussian_feats_sampled[batch_start : batch_start + decode_batch_size]
+                decoded_batch = autoencoder.decode(batch)
+                decoded_t_list.append(decoded_batch.detach().cpu().numpy())
+        decoded_main_t = np.concatenate(decoded_t_list, axis=0)
+        gaussian_feats_decoded = torch.tensor(
+            decoded_main_t, dtype=torch.float32, device=model.device
+        )
+        logger.info(
+            f"[t={t}] Filtered {len(gaussian_feats_decoded)} Gaussians, "
+            f"decoded features shape: {gaussian_feats_decoded.shape}"
+        )
+
+        gaussian_features_all.append(gaussian_feats_decoded)
+        gaussian_to_grid_mapping_all.append(gaussian_to_grid_mapping)
+        frame_grid_thw_all.append(image_grid_thw)
+
+    # Combine across timesteps for video mode
+    gaussian_features = gaussian_features_all
+    gaussians_per_image = [int(m.shape[0]) for m in gaussian_to_grid_mapping_all]
+    gaussian_to_grid_mapping = torch.cat(gaussian_to_grid_mapping_all, dim=0)
+    video_grid_thw = torch.cat(frame_grid_thw_all, dim=0)
+
+    # Video placeholders for message template
+    video_placeholders = [
+        f"frame_{int(frame_idx):06d}.jpg" for frame_idx in range(f1, f2 + 1)
+    ]
+
+    results = []
+    for query_anno in annotations:
+        query_type = query_anno["type"]
+        query_id = query_anno["id"]
+        question = query_anno["query"]
+
+        # Select prompt template by query type
+        if query_type == "pit":
+            template = cfg.eval.temporal.splat_grid_pit_prompt_template
+        elif query_type == "range":
+            template = cfg.eval.temporal.splat_grid_range_prompt_template
+        else:
+            raise ValueError(
+                f"Unsupported query type for {clip.name} {query_id}: {query_type}"
+            )
+        prompt = template.format(
+            question=question, num_frames=n_timesteps, last_frame=t2
+        )
+
+        # Build messages (video mode)
+        messages = [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": system_prompt}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "video", "video": video_placeholders},
+                    {"type": "text", "text": prompt},
+                ],
+            },
+        ]
+
+        # Generate response
+        response = generate_with_vision_features_3d(
+            messages=messages,
+            vision_features=gaussian_features,
+            model=model,
+            processor=processor,
+            image_grid_thw=None,
+            video_grid_thw=video_grid_thw,
+            gaussian_to_grid_mapping=gaussian_to_grid_mapping,
+            gaussians_per_image=gaussians_per_image,
+        )
+
+        # parse answer and convert to timestep
+        effective_fps = cfg.eval.video_fps / cfg.eval.annotation_stride
+        json_data = parse_json(response)
+        if query_type == 'pit':
+            second = json_data.get("second", None)
+            prediction = seconds_to_timestep(second, cfg.eval.n_timesteps, effective_fps)
+        elif query_type == 'range':
+            second_ranges = json_data.get("second_ranges", None)
+            prediction = []
+            if second_ranges is not None:
+                for second_range in second_ranges:
+                    if not isinstance(second_range, list) or len(second_range) != 2:
+                        prediction = None
+                        continue
+                    prediction.append([seconds_to_timestep(second_range[0], cfg.eval.n_timesteps, effective_fps), seconds_to_timestep(second_range[1], cfg.eval.n_timesteps, effective_fps)])
+        else:
+            raise ValueError(f"Unsupported query type for {clip.name} {query_anno['id']}: {query_type}")
+
+        results.append({
+            "id": query_id,
+            "type": query_type,
+            "query": question,
+            "predicted": prediction,
             "raw_response": response,
             "message_history": [],
             "tool_calls": [],

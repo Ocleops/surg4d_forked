@@ -133,14 +133,12 @@ def multiframe_queries(
         List of result dicts
     """
     # Load graph to determine stride for frame sampling
-    num_ts = get_num_timesteps_from_graph(graph_path)
-    stride = max(1, round(len(video_frames) / num_ts))
-    selected_frames = video_frames[::stride]
+    selected_frames = video_frames[::cfg.eval.annotation_stride]
     
     # Calculate effective FPS based on stride
     # Original video is at video_fps, but we sample every stride frames
     # For 20 graph timesteps from 25 fps video: effective_fps = 25 / 4 = 6.25
-    effective_fps = cfg.eval.video_fps / stride
+    effective_fps = cfg.eval.video_fps / cfg.eval.annotation_stride
 
     results = []
     for query_anno in annotations:
@@ -170,7 +168,7 @@ def multiframe_queries(
         json_data = parse_json(response)
         if query_type == 'pit':
             second = json_data.get("second", None)
-            prediction = seconds_to_timestep(second, num_ts, effective_fps)
+            prediction = seconds_to_timestep(second, cfg.eval.n_timesteps, effective_fps)
         elif query_type == 'range':
             second_ranges = json_data.get("second_ranges", None)
             prediction = []
@@ -179,7 +177,7 @@ def multiframe_queries(
                     if not isinstance(second_range, list) or len(second_range) != 2:
                         prediction = None
                         continue
-                    prediction.append([seconds_to_timestep(second_range[0], num_ts, effective_fps), seconds_to_timestep(second_range[1], num_ts, effective_fps)])
+                    prediction.append([seconds_to_timestep(second_range[0], cfg.eval.n_timesteps, effective_fps), seconds_to_timestep(second_range[1], cfg.eval.n_timesteps, effective_fps)])
         else:
             raise ValueError(f"Unsupported query type for {clip.name} {query_anno['id']}: {query_type}")
 

@@ -74,11 +74,11 @@ splat_grid_global_autoencoder_checkpoint_dir: ${autoencoder.global_checkpoint_di
 splat_grid_decode_batch_size: ${graph_extraction.decode_batch_size}
 splat_grid_gaussian_patch_size: 16
 splat_grid_gaussian_sample_ratio: 1.0
-splat_grid_opacity_threshold: 0.05
+splat_grid_opacity_threshold: 0.8
 splat_grid_system_prompt: |
   # Task
   - You are an expert visceral surgeon analyzing a cholecystectomy scene.
-  - You have access to a 3D Gaussian splatting representation of the scene projected to the camera view.
+  - You have access to an image of the scene.
 
   # Rules
   - Think briefly, do not spend too much time.

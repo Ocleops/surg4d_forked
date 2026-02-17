@@ -1,4 +1,5 @@
-methods: ["multiframe", "graph_agent"]
+# methods: ["multiframe", "graph_agent"]
+methods: ["splat_grid"]
 output_dir: ${eval.output_dir}/temporal
 tool_viz_dir: ${eval.output_dir}/tool_viz/temporal # null to disable
 
@@ -18,7 +19,7 @@ multiframe_pit_prompt_template: |
   Example output (format only): ... {{"second": T}} ...
 
 multiframe_action_duration_prompt_template: |
-  Identify the time range(s) during which '{question}' occurs.
+  {question}
 
   Your final answer has to contain a list of time ranges in seconds as a JSON object. Do not refuse!
   Example output (format only): ... {{"second_ranges": [[T_1, T_2], [T_3, T_4]]}} ...
@@ -81,3 +82,33 @@ graph_agent_range_prompt_template: |
 
   Your final answer has to contain ranges of timesteps (start and end inclusive) as a JSON object. Do not refuse!
   Example output (format only): ... {{"ranges": [[S_1, E_1], [S_2, E_2]]}} ...
+
+# splat_grid
+splat_grid_autoencoder_checkpoint_subdir: ${autoencoder.checkpoint_subdir}
+splat_grid_autoencoder_full_dim: ${autoencoder.full_dim}
+splat_grid_autoencoder_latent_dim: ${autoencoder.latent_dim}
+splat_grid_use_global_autoencoder: ${autoencoder.global_mode}
+splat_grid_global_autoencoder_checkpoint_dir: ${autoencoder.global_checkpoint_dir}
+splat_grid_decode_batch_size: ${graph_extraction.decode_batch_size}
+splat_grid_gaussian_patch_size: 16
+splat_grid_gaussian_sample_ratio: 1.0
+splat_grid_opacity_threshold: 0.8
+splat_grid_temporal_patch_size: 2
+splat_grid_fps_timesteps: 1
+splat_grid_system_prompt: |
+  # Task
+  - You are an expert visceral surgeon analyzing a cholecystectomy scene.
+  - You have access to a video of the scene.
+
+  # Rules
+  - Think briefly, do not spend too much time.
+splat_grid_pit_prompt_template: |
+  {question}
+
+  Your final answer has to contain exactly one float second as a JSON object. Do not refuse!
+  Example output (format only): ... {{"second": T}} ...
+splat_grid_range_prompt_template: |
+  {question}
+
+  Your final answer has to contain a list of time ranges in seconds as a JSON object. Do not refuse!
+  Example output (format only): ... {{"second_ranges": [[T_1, T_2], [T_3, T_4]]}} ...

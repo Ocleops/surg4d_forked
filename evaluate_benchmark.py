@@ -20,7 +20,7 @@ from benchmark.spatial import (
     frame_direct_feat_queries,
     graph_agent_feat_queries,
 )
-from benchmark.spatial_3d import splat_grid_feat_queries
+from benchmark.spatial_3d import splat_grid_feat_queries, splat_grid_temporal_queries
 
 
 def evaluate_temporal(
@@ -28,8 +28,17 @@ def evaluate_temporal(
     cfg: DictConfig,
     model,
     processor,
+    model_3d=None,
+    processor_3d=None,
 ):
-    """Run temporal action localization evaluation for a single clip."""
+    """Run temporal action localization evaluation for a single clip.
+
+    Args:
+      model: Pre-loaded patched Qwen model (for multiframe / graph_agent)
+      processor: Pre-loaded Qwen processor (for multiframe / graph_agent)
+      model_3d: Pre-loaded 3D patched Qwen model (for splat_grid)
+      processor_3d: Pre-loaded Qwen processor (for splat_grid)
+    """
     if cfg.eval is None or cfg.eval.temporal is None:
         return
     
@@ -44,7 +53,7 @@ def evaluate_temporal(
         temporal_data = json.load(f)
     annotations = temporal_data["annotations"]
 
-    # Map method names to strategy functions
+    # Methods using the normal model
     method_map = {
         "multiframe": multiframe_queries,
         "graph_agent": graph_agent_queries,
@@ -54,6 +63,9 @@ def evaluate_temporal(
     all_results = {}
     
     for method_name in cfg.eval.temporal.methods:
+        if method_name == "splat_grid":
+            # splat_grid uses the 3D model, handled separately below
+            continue
         if method_name not in method_map:
             continue
         
@@ -69,6 +81,19 @@ def evaluate_temporal(
         )
         all_results[method_name] = results
         
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    if "splat_grid" in cfg.eval.temporal.methods:
+        all_results["splat_grid"] = splat_grid_temporal_queries(
+            model=model_3d,
+            processor=processor_3d,
+            graph_path=graph_path,
+            annotations=annotations,
+            clip=clip,
+            cfg=cfg,
+        )
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -219,7 +244,11 @@ def main(cfg: DictConfig):
     needs_3d_model = False
 
     if cfg.eval is not None and cfg.eval.temporal is not None:
-        needs_normal_model = True
+        temporal_methods = set(cfg.eval.temporal.methods)
+        if temporal_methods & {"multiframe", "graph_agent"}:
+            needs_normal_model = True
+        if "splat_grid" in temporal_methods:
+            needs_3d_model = True
 
     if cfg.eval is not None and cfg.eval.spatial is not None:
         spatial_methods = set(cfg.eval.spatial.methods)
@@ -244,7 +273,11 @@ def main(cfg: DictConfig):
         )
 
     for clip in tqdm(cfg.clips, desc="Evaluating clips", unit="clip"):
-        evaluate_temporal(clip=clip, cfg=cfg, model=model, processor=processor)
+        evaluate_temporal(
+            clip=clip, cfg=cfg,
+            model=model, processor=processor,
+            model_3d=model_3d, processor_3d=processor_3d,
+        )
         evaluate_spatial(
             clip=clip, cfg=cfg,
             model=model, processor=processor,
