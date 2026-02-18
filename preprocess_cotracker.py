@@ -447,7 +447,7 @@ def process_clip_cotracker(clip: DictConfig, cfg: DictConfig):
     semantic_mask_dir = clip_dir / cfg.preprocessing.semantic_mask_subdir
     
     # Output directory for CoTracker data
-    cotracker_dir = clip_dir / "cotracker"
+    cotracker_dir = clip_dir / cfg.preprocessing.cotracker_subdir
     cotracker_dir.mkdir(parents=True, exist_ok=True)
     
     if not images_dir.exists():

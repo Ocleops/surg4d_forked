@@ -8,7 +8,7 @@ from typing import Optional, Tuple, Dict
 from loguru import logger
 
 
-def load_cotracker_data(clip_dir: Path) -> Dict[str, torch.Tensor]:
+def load_cotracker_data(clip_dir: Path, cotracker_subdir: str) -> Dict[str, torch.Tensor]:
     """
     Load CoTracker3 data from preprocessed directory.
     
@@ -22,7 +22,7 @@ def load_cotracker_data(clip_dir: Path) -> Dict[str, torch.Tensor]:
             - gaussian_control_point_weights: (N_gaussians, K)
             - gaussian_positions_precomputed: (T, N_gaussians, 3)
     """
-    cotracker_dir = clip_dir / "cotracker"
+    cotracker_dir = clip_dir / cotracker_subdir
     
     if not cotracker_dir.exists():
         return None

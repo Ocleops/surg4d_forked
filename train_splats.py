@@ -217,8 +217,11 @@ def train_splat(clip: DictConfig, cfg: DictConfig):
     train_mod.time = time_module_fix
 
     # Call the training function
+    dataset = lp.extract(args)
+    dataset.cotracker_subdir = cfg.splat.cotracker_subdir
+
     training(
-        lp.extract(args),
+        dataset,
         hp.extract(args),
         op.extract(args),
         pp.extract(args),
@@ -360,8 +363,11 @@ def render_splat(
         args.rezero_init = cfg.splat.rezero_init
 
         # Call render function
+        render_dataset = mp.extract(args)
+        render_dataset.cotracker_subdir = cfg.splat.cotracker_subdir
+
         render_sets(
-            mp.extract(args),
+            render_dataset,
             hp.extract(args),
             args.iteration,
             pp.extract(args),

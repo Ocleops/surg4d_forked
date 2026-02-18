@@ -27,6 +27,7 @@ learning_rates:
   scaling: 0.005
   rotation: 0.001
 tensorboard_subdir: "run"
+cotracker_subdir: ${preprocessing.cotracker_subdir}
 opacity_loss_weight: 1.0
 
 dynamic_position: true

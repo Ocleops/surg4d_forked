@@ -179,6 +179,7 @@ def load_gaussian_model(
     # Load model
     hyper = hyperparam.extract(args)
     dataset = model_params.extract(args)
+    dataset.cotracker_subdir = cfg.graph_extraction.cotracker_subdir
     gaussians = GaussianModel(dataset.sh_degree, hyper)  # type:ignore
     scene = Scene(
         dataset,
@@ -942,7 +943,7 @@ def load_precomputed_instance_clusters(clip: DictConfig, cfg: DictConfig, preclu
         clusters: (N_gaussians,) array of instance IDs, -1 for background/unassigned
     """
     clip_dir = Path(cfg.preprocessed_root) / clip.name
-    merged_ids_path = clip_dir / "cotracker" / "merged_instance_ids.npy"
+    merged_ids_path = clip_dir / cfg.graph_extraction.cotracker_subdir / "merged_instance_ids.npy"
 
     clusters = np.load(merged_ids_path)
     clusters = clusters[precluster_mask]
@@ -1275,7 +1276,7 @@ def extract_graph(clip: DictConfig, cfg: DictConfig):
         clusters = load_precomputed_instance_clusters(clip, cfg, precluster_mask=mask.detach().cpu().numpy())
         # Load semantic labels for precomputed clusters
         clip_dir = Path(cfg.preprocessed_root) / clip.name
-        semantic_labels_path = clip_dir / "cotracker" / "merged_instance_semantic_labels.json"
+        semantic_labels_path = clip_dir / cfg.graph_extraction.cotracker_subdir / "merged_instance_semantic_labels.json"
         if semantic_labels_path.exists():
             with open(semantic_labels_path, "r") as f:
                 semantic_labels_raw = json.load(f)
@@ -1374,6 +1375,13 @@ def extract_graph(clip: DictConfig, cfg: DictConfig):
     )  # dense bhattacharyya coefficients through time (timesteps, n_clusters, n_clusters)
     np.save(out / "positions.npy", pos_through_time)  # (T, n_filtered_gaussians, 3)
     np.save(out / "clusters.npy", clusters)  # (n_filtered_gaussians,)
+    opacities = gaussians.get_opacity.detach().squeeze().cpu().numpy()
+    opacities_through_time = np.repeat( # are static anyway
+        opacities[None, :], pos_through_time.shape[0], axis=0
+    )
+    np.save(
+        out / "opacities_through_time.npy", opacities_through_time
+    )  # opacities through time (timesteps, n_filtered_gaussians)
     np.save(
         out / "patch_latents_through_time.npy", lf_patch_through_time
     )  # patch latents through time (timesteps, n_filtered_gaussians, lang_dim)
@@ -1381,7 +1389,7 @@ def extract_graph(clip: DictConfig, cfg: DictConfig):
         with open(out / "cluster_semantics.json", "w") as f:
             json.dump({str(k): v for k, v in semantic_labels.items()}, f, indent=2)
         logger.info(
-            f"Saved adapted semantic labels to {out / 'merged_instance_semantic_labels.json'}"
+            f"Saved adapted semantic labels to {out / 'cluster_semantics.json'}"
         )
 
     # matplotlib 3D latent feature visualizations

@@ -3,6 +3,7 @@ instance_mask_subdir: instance_masks
 depth_subdir: depth
 depth_processed_subdir: depth_processed  # depth at DA3 processed resolution (for point cloud consistency)
 confidence_subdir: confidence
+cotracker_subdir: cotracker_semantics
 
 # spatial label preprocessing
 annotation_root: data/annotations

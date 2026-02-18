@@ -29,6 +29,7 @@ learning_rates:
   rotation: 0.001 # rotation
 
 tensorboard_subdir: "states15_iter10k_aenoisy" # TensorBoard subdir prefix; actual folder is "<prefix>_<timestamp>"
+cotracker_subdir: ${preprocessing.cotracker_subdir}
 
 # CoTracker3 control point settings
 cotracker_k_neighbors: 3 # number of nearest control points per Gaussian

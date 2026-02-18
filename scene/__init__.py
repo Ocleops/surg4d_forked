@@ -95,7 +95,9 @@ class Scene:
         # Load CoTracker data if available
         from utils.cotracker_gaussian_utils import load_cotracker_data
         from pathlib import Path
-        cotracker_data = load_cotracker_data(Path(args.source_path))
+        cotracker_data = load_cotracker_data(
+            Path(args.source_path), args.cotracker_subdir
+        )
         if cotracker_data is not None:
             self.gaussians._cotracker_data = cotracker_data
             # Store number of frames for time-to-frame conversion

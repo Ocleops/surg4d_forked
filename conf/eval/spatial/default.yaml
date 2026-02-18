@@ -73,12 +73,16 @@ graph_agent_semantics_use_global_autoencoder: ${autoencoder.global_mode}
 graph_agent_semantics_global_autoencoder_checkpoint_dir: ${autoencoder.global_checkpoint_dir}
 graph_agent_semantics_max_iterations: 20
 graph_agent_semantics_tools:
+  - name: node_distances_through_time
+    max_calls: null
+  - name: node_overlap_scores_through_time
+    max_calls: null
   - name: node_overlap_position_at_time
     max_calls: null
-  - name: inspect_highres_node_at_time
-    max_calls: 5
-  - name: voxelize_scene
-    max_calls: 3
+  - name: node_movement
+    max_calls: null
+  - name: relative_movement
+    max_calls: null
 graph_agent_semantics_system_prompt: |
   # Task
   - You are an expert visceral surgeon analyzing a cholecystectomy scene.

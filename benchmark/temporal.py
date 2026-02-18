@@ -21,6 +21,7 @@ from omegaconf import DictConfig
 from llm.qwen_utils import (
     prompt_with_video_frames,
     prompt_graph_agent,
+    prompt_graph_agent_with_semantic_labels,
 )
 from llm.tools import GraphTools
 from autoencoder.model_qwen import QwenAutoencoder
@@ -207,6 +208,7 @@ def graph_agent_queries(
     clip: "DictConfig",
     cfg: "DictConfig",
     video_frames: List[Path] = None, # not used in this function, but required for compatibility with other functions
+    use_semantic_labels: bool = False,
 ) -> List[Dict]:
     """Run graph agent temporal queries with tools.
     
@@ -246,18 +248,42 @@ def graph_agent_queries(
     adjacency = np.load(adjacency_path)
     bhattacharyya_coeffs = np.load(bhattacharyya_path)
 
+    if use_semantic_labels:
+        semantic_labels_path = graph_path / "cluster_semantics.json"
+        with open(semantic_labels_path, "r") as f:
+            node_semantic_labels = json.load(f)
+
     point_o2n, _, distance_o2n, _ = get_coord_transformations(positions)
 
+    if use_semantic_labels:
+        autoencoder_checkpoint_subdir = cfg.eval.temporal.graph_agent_semantics_autoencoder_checkpoint_subdir
+        autoencoder_full_dim = cfg.eval.temporal.graph_agent_semantics_autoencoder_full_dim
+        autoencoder_latent_dim = cfg.eval.temporal.graph_agent_semantics_autoencoder_latent_dim
+        autoencoder_use_global_autoencoder = cfg.eval.temporal.graph_agent_semantics_use_global_autoencoder
+        global_autoencoder_checkpoint_dir = cfg.eval.temporal.graph_agent_semantics_global_autoencoder_checkpoint_dir
+        max_iterations = cfg.eval.temporal.graph_agent_semantics_max_iterations
+        tool_config = cfg.eval.temporal.graph_agent_semantics_tools
+        system_prompt = cfg.eval.temporal.graph_agent_semantics_system_prompt
+    else:
+        autoencoder_checkpoint_subdir = cfg.eval.temporal.graph_agent_autoencoder_checkpoint_subdir
+        autoencoder_full_dim = cfg.eval.temporal.graph_agent_autoencoder_full_dim
+        autoencoder_latent_dim = cfg.eval.temporal.graph_agent_autoencoder_latent_dim
+        autoencoder_use_global_autoencoder = cfg.eval.temporal.graph_agent_use_global_autoencoder
+        global_autoencoder_checkpoint_dir = cfg.eval.temporal.graph_agent_global_autoencoder_checkpoint_dir
+        max_iterations = cfg.eval.temporal.graph_agent_max_iterations
+        tool_config = cfg.eval.temporal.graph_agent_tools
+        system_prompt = cfg.eval.temporal.graph_agent_system_prompt
+
     # Load autoencoder for highres inspection tools (following spatial pattern)
-    if cfg.eval.temporal.graph_agent_use_global_autoencoder:
-        autoencoder_path = Path(cfg.preprocessed_root) / cfg.eval.temporal.graph_agent_global_autoencoder_checkpoint_dir / "best_ckpt.pth"
+    if autoencoder_use_global_autoencoder:
+        autoencoder_path = Path(cfg.preprocessed_root) / global_autoencoder_checkpoint_dir / "best_ckpt.pth"
     else:
         clip_dir = Path(cfg.preprocessed_root) / clip.name
-        autoencoder_path = clip_dir / cfg.eval.temporal.graph_agent_autoencoder_checkpoint_subdir / "best_ckpt.pth"
+        autoencoder_path = clip_dir / autoencoder_checkpoint_subdir / "best_ckpt.pth"
     
     autoencoder = QwenAutoencoder(
-        input_dim=cfg.eval.temporal.graph_agent_autoencoder_full_dim,
-        latent_dim=cfg.eval.temporal.graph_agent_autoencoder_latent_dim,
+        input_dim=autoencoder_full_dim,
+        latent_dim=autoencoder_latent_dim,
     ).to(model.device)
     autoencoder.load_state_dict(
         torch.load(autoencoder_path, map_location=model.device)
@@ -288,11 +314,10 @@ def graph_agent_queries(
     # Parse graph_agent_tools config (list of objects with name and max_calls)
     tool_names = []
     tool_call_limits = {}
-    tool_config = cfg.eval.temporal.graph_agent_tools
     for tool_entry in tool_config:
-        tool_name = tool_entry['name']
+        tool_name = tool_entry.name
         tool_names.append(tool_name)
-        max_calls = tool_entry.get('max_calls')
+        max_calls = tool_entry.max_calls
         if max_calls is not None:
             tool_call_limits[tool_name] = max_calls
     
@@ -320,11 +345,16 @@ def graph_agent_queries(
             graph_tools.start_recording(str(rrd_file))
         
         # prompt
-        system_prompt = cfg.eval.temporal.graph_agent_system_prompt
         if query_type == 'pit':
-            template = cfg.eval.temporal.graph_agent_pit_prompt_template
+            if use_semantic_labels:
+                template = cfg.eval.temporal.graph_agent_semantics_pit_prompt_template
+            else:
+                template = cfg.eval.temporal.graph_agent_pit_prompt_template
         elif query_type == 'range':
-            template = cfg.eval.temporal.graph_agent_range_prompt_template
+            if use_semantic_labels:
+                template = cfg.eval.temporal.graph_agent_semantics_range_prompt_template
+            else:
+                template = cfg.eval.temporal.graph_agent_range_prompt_template
         else:
             raise ValueError(f"Unsupported query type for {clip.name} {query_anno['id']}: {query_type}")
         num_ts = graph_tools.adjacency.shape[0]
@@ -333,20 +363,36 @@ def graph_agent_queries(
         # Query model with graph and tools
         # Use prompt_graph_agent which gives initial rough nodes at timestep 0
         # The agent then uses temporal tools to explore across time
-        agent_result = prompt_graph_agent(
-            question=prompt,
-            node_feats=node_feats_npz,
-            initial_timestep_idx=0,  # Start at first timestep, agent explores temporally
-            node_centers=point_o2n(node_centers),
-            node_centroids=point_o2n(node_centroids),
-            node_extents=distance_o2n(node_extents),
-            model=model,
-            processor=processor,
-            tools=tools,
-            system_prompt=system_prompt,
-            max_iterations=cfg.eval.temporal.graph_agent_max_iterations,
-            tool_call_limits=tool_call_limits,
-        )
+        if use_semantic_labels:
+            agent_result = prompt_graph_agent_with_semantic_labels(
+                question=prompt,
+                initial_timestep_idx=0,  # Start at first timestep, agent explores temporally
+                node_centers=point_o2n(node_centers),
+                node_centroids=point_o2n(node_centroids),
+                node_extents=distance_o2n(node_extents),
+                node_semantic_labels=node_semantic_labels,
+                model=model,
+                processor=processor,
+                tools=tools,
+                system_prompt=system_prompt,
+                max_iterations=max_iterations,
+                tool_call_limits=tool_call_limits,
+            )
+        else:
+            agent_result = prompt_graph_agent(
+                question=prompt,
+                node_feats=node_feats_npz,
+                initial_timestep_idx=0,  # Start at first timestep, agent explores temporally
+                node_centers=point_o2n(node_centers),
+                node_centroids=point_o2n(node_centroids),
+                node_extents=distance_o2n(node_extents),
+                model=model,
+                processor=processor,
+                tools=tools,
+                system_prompt=system_prompt,
+                max_iterations=max_iterations,
+                tool_call_limits=tool_call_limits,
+            )
         
         # Stop recording if tool visualization is enabled
         if tool_viz_enabled:

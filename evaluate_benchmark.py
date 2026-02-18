@@ -57,6 +57,7 @@ def evaluate_temporal(
     method_map = {
         "multiframe": multiframe_queries,
         "graph_agent": graph_agent_queries,
+        "graph_agent_semantics": graph_agent_queries,
     }
     
     # Collect predictions for all methods specified in config
@@ -78,6 +79,7 @@ def evaluate_temporal(
             annotations=annotations,
             clip=clip,
             cfg=cfg,
+            use_semantic_labels=(method_name == "graph_agent_semantics"),
         )
         all_results[method_name] = results
         
@@ -257,7 +259,7 @@ def main(cfg: DictConfig):
 
     if cfg.eval is not None and cfg.eval.temporal is not None:
         temporal_methods = set(cfg.eval.temporal.methods)
-        if temporal_methods & {"multiframe", "graph_agent"}:
+        if temporal_methods & {"multiframe", "graph_agent", "graph_agent_semantics"}:
             needs_normal_model = True
         if "splat_grid" in temporal_methods:
             needs_3d_model = True

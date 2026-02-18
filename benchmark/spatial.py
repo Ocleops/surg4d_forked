@@ -184,7 +184,7 @@ def graph_agent_feat_queries(
     bhattacharyya_coeffs = np.load(bhattacharyya_path)
 
     if use_semantic_labels:
-        semantic_labels_path = graph_dir / "merged_instance_semantic_labels.json"
+        semantic_labels_path = graph_dir / "cluster_semantics.json"
         with open(semantic_labels_path, "r") as f:
             node_semantic_labels = json.load(f)
 
