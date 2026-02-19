@@ -196,7 +196,7 @@ def compute_temporal_metrics(cfg: DictConfig):
                 pred_item = pred_by_query_id.get(query_id)
                 
                 if query_type == "pit":
-                    gt_timestep = int(annotation["timesstep"])
+                    gt_timestep = int(annotation["timestep"])
                     
                     if pred_item and "predicted" in pred_item and pred_item["predicted"] is not None:
                         pred_timestep = int(pred_item["predicted"])
@@ -279,6 +279,187 @@ def compute_temporal_metrics(cfg: DictConfig):
         json.dump({"methods": aggregated}, f, indent=2)
 
 
+def compute_directional_metrics(cfg: DictConfig):
+    if cfg.compute_metrics.directional is None:
+        return
+
+    cm_cfg = cfg.compute_metrics.directional
+    pred_root = Path(cm_cfg.pred_root)
+
+    out_dir = Path(cm_cfg.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    aggregated_file = Path(cm_cfg.aggregated_output_filename)
+    aggregated_file.parent.mkdir(parents=True, exist_ok=True)
+
+    method_all_errors: dict[str, list[float]] = {}
+    method_all_axis_errors: dict[str, dict[str, list[float]]] = {}
+    method_all_axis_errors_by_gt_value: dict[str, dict[str, dict[int, list[float]]]] = {}
+
+    for clip in cfg.clips:
+        clip_name = str(clip.name)
+        labels_path = Path(cfg.compute_metrics.annotations_root) / "directional" / f"{clip_name}.json"
+        pred_path = pred_root / f"{clip_name}.json"
+
+        if not labels_path.exists() or not pred_path.exists():
+            continue
+
+        with labels_path.open("r") as f:
+            labels_data = json.load(f)
+        with pred_path.open("r") as f:
+            preds_data = json.load(f)
+
+        annotations = labels_data.get("annotations", [])
+        methods_preds = preds_data.get("methods", {})
+
+        clip_results: dict[str, dict] = {}
+
+        for method_name, method_preds in methods_preds.items():
+            if method_name not in method_all_errors:
+                method_all_errors[method_name] = []
+                method_all_axis_errors[method_name] = {"x": [], "y": [], "z": []}
+                method_all_axis_errors_by_gt_value[method_name] = {
+                    "x": {-1: [], 0: [], 1: []},
+                    "y": {-1: [], 0: [], 1: []},
+                    "z": {-1: [], 0: [], 1: []},
+                }
+
+            method_errors: list[float] = []
+            method_axis_errors = {"x": [], "y": [], "z": []}
+            method_axis_errors_by_gt_value = {
+                "x": {-1: [], 0: [], 1: []},
+                "y": {-1: [], 0: [], 1: []},
+                "z": {-1: [], 0: [], 1: []},
+            }
+            query_results: list[dict] = []
+
+            pred_by_query_id: dict[str, dict] = {}
+            for pred_item in method_preds:
+                query_id = pred_item.get("id")
+                if query_id:
+                    pred_by_query_id[query_id] = pred_item
+
+            for annotation in annotations:
+                query_id = str(annotation.get("id"))
+                question = str(annotation.get("query"))
+                gt_direction = annotation.get("direction")
+                gt_range = annotation.get("range")
+
+                gx = float(gt_direction["x"])
+                gy = float(gt_direction["y"])
+                gz = float(gt_direction["z"])
+
+                pred_item = pred_by_query_id.get(query_id)
+                if pred_item and pred_item.get("predicted") is not None:
+                    pred_direction = pred_item["predicted"]
+                    px = float(pred_direction["x"])
+                    py = float(pred_direction["y"])
+                    pz = float(pred_direction["z"])
+                    x_abs_error = float(abs(px - gx))
+                    y_abs_error = float(abs(py - gy))
+                    z_abs_error = float(abs(pz - gz))
+                    l1_per_axis_mean = float((x_abs_error + y_abs_error + z_abs_error) / 3.0)
+                else:
+                    px, py, pz = None, None, None
+                    x_abs_error = float(cm_cfg.noprediction_error)
+                    y_abs_error = float(cm_cfg.noprediction_error)
+                    z_abs_error = float(cm_cfg.noprediction_error)
+                    l1_per_axis_mean = float(cm_cfg.noprediction_error)
+
+                gx_int = int(gx)
+                gy_int = int(gy)
+                gz_int = int(gz)
+
+                method_errors.append(l1_per_axis_mean)
+                method_all_errors[method_name].append(l1_per_axis_mean)
+                method_axis_errors["x"].append(x_abs_error)
+                method_axis_errors["y"].append(y_abs_error)
+                method_axis_errors["z"].append(z_abs_error)
+                method_all_axis_errors[method_name]["x"].append(x_abs_error)
+                method_all_axis_errors[method_name]["y"].append(y_abs_error)
+                method_all_axis_errors[method_name]["z"].append(z_abs_error)
+
+                method_axis_errors_by_gt_value["x"][gx_int].append(x_abs_error)
+                method_axis_errors_by_gt_value["y"][gy_int].append(y_abs_error)
+                method_axis_errors_by_gt_value["z"][gz_int].append(z_abs_error)
+                method_all_axis_errors_by_gt_value[method_name]["x"][gx_int].append(x_abs_error)
+                method_all_axis_errors_by_gt_value[method_name]["y"][gy_int].append(y_abs_error)
+                method_all_axis_errors_by_gt_value[method_name]["z"][gz_int].append(z_abs_error)
+
+                query_results.append(
+                    {
+                        "id": query_id,
+                        "query": question,
+                        "range": gt_range,
+                        "ground_truth_direction": {"x": gx, "y": gy, "z": gz},
+                        "predicted_direction": {"x": px, "y": py, "z": pz} if px is not None else None,
+                        "axis_l1_distances": {
+                            "x": round(x_abs_error, 3),
+                            "y": round(y_abs_error, 3),
+                            "z": round(z_abs_error, 3),
+                        },
+                        "mean_axis_l1_distance": round(l1_per_axis_mean, 3),
+                    }
+                )
+
+            clip_results[method_name] = {
+                "queries": query_results,
+                "num_queries": len(query_results),
+                "mean_axis_l1_distance": round(float(np.mean(method_errors)), 3) if method_errors else None,
+                "std_axis_l1_distance": round(float(np.std(method_errors)), 3) if method_errors else None,
+                "mean_axis_l1_distance_per_axis": {
+                    axis_name: (
+                        round(float(np.mean(axis_errors)), 3) if axis_errors else None
+                    )
+                    for axis_name, axis_errors in method_axis_errors.items()
+                },
+                "mean_axis_l1_distance_per_axis_by_gt_value": {
+                    axis_name: {
+                        str(gt_value): (
+                            round(float(np.mean(gt_value_errors)), 3) if gt_value_errors else None
+                        )
+                        for gt_value, gt_value_errors in by_gt.items()
+                    }
+                    for axis_name, by_gt in method_axis_errors_by_gt_value.items()
+                },
+            }
+
+        with (out_dir / f"{clip_name}.json").open("w") as f:
+            json.dump(
+                {
+                    "clip": clip_name,
+                    "methods": clip_results,
+                },
+                f,
+                indent=2,
+            )
+
+    aggregated: dict[str, dict] = {}
+    for method_name, errors in method_all_errors.items():
+        aggregated[method_name] = {
+            "mean_axis_l1_distance": round(float(np.mean(errors)), 3) if errors else None,
+            "std_axis_l1_distance": round(float(np.std(errors)), 3) if errors else None,
+            "mean_axis_l1_distance_per_axis": {
+                axis_name: (
+                    round(float(np.mean(axis_errors)), 3) if axis_errors else None
+                )
+                for axis_name, axis_errors in method_all_axis_errors[method_name].items()
+            },
+            "mean_axis_l1_distance_per_axis_by_gt_value": {
+                axis_name: {
+                    str(gt_value): (
+                        round(float(np.mean(gt_value_errors)), 3) if gt_value_errors else None
+                    )
+                    for gt_value, gt_value_errors in by_gt.items()
+                }
+                for axis_name, by_gt in method_all_axis_errors_by_gt_value[method_name].items()
+            },
+            "num_queries": len(errors),
+        }
+
+    with aggregated_file.open("w") as f:
+        json.dump({"methods": aggregated}, f, indent=2)
+
+
 def compute_temporal_iou(gt_ranges: list[list[int]], pred_ranges: list[list[int]], max_timestep: int) -> float:
     """Compute IoU between ground truth and predicted temporal ranges.
     
@@ -328,6 +509,7 @@ def main(cfg: DictConfig):
 
     compute_spatial_metrics(cfg)
     compute_temporal_metrics(cfg)
+    compute_directional_metrics(cfg)
 
 if __name__ == "__main__":
     main()

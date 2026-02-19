@@ -1,25 +1,6 @@
-gt_filename: ${preprocessing.spatial_labels_output_filename}
-output_dir: ${eval.output_dir}/spatial
-dump_visualizations: true
-visualizations_dir: ${eval.output_dir}/spatial_viz
-tool_viz_dir: ${eval.output_dir}/tool_viz/spatial
-
-methods: ["graph_agent_semantics"] #, "frame_direct", "graph_agent"]
-# methods: ["splat_grid"]
-
-# frame direct
-frame_direct_system_prompt: |
-  # Task
-  - You are an expert visceral surgeon analyzing a cholecystectomy scene.
-  - You have access to an image of the scene.
-
-  # Rules
-  - Think briefly, do not spend too much time.
-frame_direct_prompt_template: |
-  {question}
-
-  Your final answer has to contain exactly one 2D point in the image's pixel coordinate system as a JSON object. Do not refuse!
-  Example output (format only): ... {{"x": X, "y": Y}} ...
+methods: ["graph_agent_semantics"]
+output_dir: ${eval.output_dir}/directional
+tool_viz_dir: ${eval.output_dir}/tool_viz/directional
 
 # graph agent
 graph_agent_autoencoder_checkpoint_subdir: ${autoencoder.checkpoint_subdir}
@@ -27,14 +8,20 @@ graph_agent_autoencoder_full_dim: ${autoencoder.full_dim}
 graph_agent_autoencoder_latent_dim: ${autoencoder.latent_dim}
 graph_agent_use_global_autoencoder: ${autoencoder.global_mode}
 graph_agent_global_autoencoder_checkpoint_dir: ${autoencoder.global_checkpoint_dir}
-graph_agent_max_iterations: 20
+graph_agent_max_iterations: 30
 graph_agent_tools:
-  - name: node_overlap_position_at_time
+  - name: node_distances_through_time
     max_calls: null
+  - name: node_overlap_scores_through_time
+    max_calls: null
+  - name: inspect_node_through_time
+    max_calls: 5
+  - name: inspect_scene_at_time
+    max_calls: 3
   - name: inspect_highres_node_at_time
     max_calls: 5
   - name: voxelize_scene
-    max_calls: 3
+    max_calls: 5
 graph_agent_system_prompt: |
   # Task
   - You are an expert visceral surgeon analyzing a cholecystectomy scene.
@@ -48,7 +35,7 @@ graph_agent_system_prompt: |
   - Coordinate system:
     - relative to the laparoscopic camera, which might be inserted into the abdomen from any direction
     - laparoscopic camera looks in positive z direction
-    - the coordinate system is rouglhly metric in cm (although not perfectly so, distances tend to be overestimated a bit)
+    - the coordinate system is roughly metric in cm (although not perfectly so, distances tend to be overestimated a bit)
     - increase in x means movement to the right
     - increase in y means movement to the bottom
     - increase in z means movement away from the camera
@@ -62,7 +49,14 @@ graph_agent_system_prompt: |
 graph_agent_prompt_template: |
   {question}
 
-  Your final answer has to contain exactly one 3D point in the scene's coordinate system as a JSON object. Do not refuse!
+  Focus on motion in the timestep range [{range_start}, {range_end}] (inclusive).
+  The graph has {num_frames} timesteps (t=0 to t={last_frame}).
+
+  Your final answer has to contain exactly one direction class vector as a JSON object. Do not refuse!
+  Do not output continuous values. For each axis, output only one of -1, 0, or 1:
+  - x: -1 if significant movement to the left, 0 if no significant movement, 1 if significant movement to the right
+  - y: -1 if significant movement upward, 0 if no significant movement, 1 if significant movement downward
+  - z: -1 if significant movement toward the camera, 0 if no significant movement, 1 if significant movement away from the camera
   Example output (format only): ... {{"x": X, "y": Y, "z": Z}} ...
 
 # graph agent with semantic labels
@@ -71,7 +65,7 @@ graph_agent_semantics_autoencoder_full_dim: ${autoencoder.full_dim}
 graph_agent_semantics_autoencoder_latent_dim: ${autoencoder.latent_dim}
 graph_agent_semantics_use_global_autoencoder: ${autoencoder.global_mode}
 graph_agent_semantics_global_autoencoder_checkpoint_dir: ${autoencoder.global_checkpoint_dir}
-graph_agent_semantics_max_iterations: 20
+graph_agent_semantics_max_iterations: 30
 graph_agent_semantics_tools:
   - name: node_distances_through_time
     max_calls: null
@@ -98,7 +92,7 @@ graph_agent_semantics_system_prompt: |
   - Coordinate system:
     - relative to the laparoscopic camera, which might be inserted into the abdomen from any direction
     - laparoscopic camera looks in positive z direction
-    - the coordinate system is rouglhly metric in cm (although not perfectly so, distances tend to be overestimated a bit)
+    - the coordinate system is roughly metric in cm (although not perfectly so, distances tend to be overestimated a bit)
     - increase in x means movement to the right
     - increase in y means movement to the bottom
     - increase in z means movement away from the camera
@@ -108,30 +102,13 @@ graph_agent_semantics_system_prompt: |
   - Think briefly, do not spend too much time on each turn.
   - The questions are very specific, pay close attention to all of the questions' details.
 graph_agent_semantics_prompt_template: |
+  The following question only concerns timesteps {range_start} to {range_end} (inclusive). Do not consider any other timesteps for your answer!
+
   {question}
 
-  Your final answer has to contain exactly one 3D point in the scene's coordinate system as a JSON object. Do not refuse!
+  Your final answer has to contain exactly one direction class vector as a JSON object. Do not refuse!
+  Do not output continuous values. For each axis, output only one of -1, 0, or 1:
+  - x: -1 if significant movement to the left, 0 if no significant movement, 1 if significant movement to the right
+  - y: -1 if significant movement upward, 0 if no significant movement, 1 if significant movement downward
+  - z: -1 if significant movement toward the camera, 0 if no significant movement, 1 if significant movement away from the camera
   Example output (format only): ... {{"x": X, "y": Y, "z": Z}} ...
-
-# splat_grid
-splat_grid_autoencoder_checkpoint_subdir: ${autoencoder.checkpoint_subdir}
-splat_grid_autoencoder_full_dim: ${autoencoder.full_dim}
-splat_grid_autoencoder_latent_dim: ${autoencoder.latent_dim}
-splat_grid_use_global_autoencoder: ${autoencoder.global_mode}
-splat_grid_global_autoencoder_checkpoint_dir: ${autoencoder.global_checkpoint_dir}
-splat_grid_decode_batch_size: ${graph_extraction.decode_batch_size}
-splat_grid_gaussian_patch_size: 16
-splat_grid_gaussian_sample_ratio: 1.0
-splat_grid_opacity_threshold: 0.8
-splat_grid_system_prompt: |
-  # Task
-  - You are an expert visceral surgeon analyzing a cholecystectomy scene.
-  - You have access to an image of the scene.
-
-  # Rules
-  - Think briefly, do not spend too much time.
-splat_grid_prompt_template: |
-  {question}
-
-  Your final answer has to contain exactly one 2D point in the image's pixel coordinate system as a JSON object. Do not refuse!
-  Example output (format only): ... {{"x": X, "y": Y}} ...

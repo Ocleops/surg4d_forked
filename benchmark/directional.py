@@ -1,0 +1,227 @@
+import gc
+import json
+import re
+from pathlib import Path
+from typing import Any, Dict, List
+
+import numpy as np
+import torch
+from omegaconf import DictConfig
+
+from autoencoder.model_qwen import QwenAutoencoder
+from benchmark.graph_utils import get_coord_transformations
+from benchmark.serialization_utils import parse_json, sanitize_tool_calls
+from llm.qwen_utils import prompt_graph_agent, prompt_graph_agent_with_semantic_labels
+from llm.tools import GraphTools
+
+
+def _parse_axis_class(value: Any) -> int | None:
+    if not isinstance(value, (int, float)):
+        return None
+    numeric_value = float(value)
+    if numeric_value not in (-1.0, 0.0, 1.0):
+        return None
+    return int(numeric_value)
+
+
+def graph_agent_directional_queries(
+    model,
+    processor,
+    graph_path: Path,
+    annotations: List[Dict[str, Any]],
+    clip: DictConfig,
+    cfg: DictConfig,
+    use_semantic_labels: bool = True,
+) -> List[Dict[str, Any]]:
+    """Run directional graph-agent queries with tools.
+
+    Mirrors temporal/spatial graph-agent benchmark style for directional labels.
+    """
+    node_feats_npz_path = graph_path / "c_qwen_feats.npz"
+    centers_path = graph_path / "c_centers.npy"
+    centroids_path = graph_path / "c_centroids.npy"
+    extents_path = graph_path / "c_extents.npy"
+    positions_path = graph_path / "positions.npy"
+    clusters_path = graph_path / "clusters.npy"
+    patch_latents_path = graph_path / "patch_latents_through_time.npy"
+    adjacency_path = graph_path / "graph.npy"
+    bhattacharyya_path = graph_path / "bhattacharyya_coeffs.npy"
+
+    node_feats_npz = np.load(node_feats_npz_path)
+    node_centers = np.load(centers_path)
+    node_centroids = np.load(centroids_path)
+    node_extents = np.load(extents_path)
+    positions = np.load(positions_path)
+    clusters = np.load(clusters_path)
+    patch_latents_through_time = np.load(patch_latents_path)
+    adjacency = np.load(adjacency_path)
+    bhattacharyya_coeffs = np.load(bhattacharyya_path)
+
+    if use_semantic_labels:
+        semantic_labels_path = graph_path / "cluster_semantics.json"
+        with open(semantic_labels_path, "r") as f:
+            node_semantic_labels = json.load(f)
+
+    point_o2n, _, distance_o2n, _ = get_coord_transformations(positions)
+
+    if use_semantic_labels:
+        autoencoder_checkpoint_subdir = cfg.eval.directional.graph_agent_semantics_autoencoder_checkpoint_subdir
+        autoencoder_full_dim = cfg.eval.directional.graph_agent_semantics_autoencoder_full_dim
+        autoencoder_latent_dim = cfg.eval.directional.graph_agent_semantics_autoencoder_latent_dim
+        autoencoder_use_global_autoencoder = cfg.eval.directional.graph_agent_semantics_use_global_autoencoder
+        global_autoencoder_checkpoint_dir = cfg.eval.directional.graph_agent_semantics_global_autoencoder_checkpoint_dir
+        max_iterations = cfg.eval.directional.graph_agent_semantics_max_iterations
+        tool_config = cfg.eval.directional.graph_agent_semantics_tools
+        system_prompt = cfg.eval.directional.graph_agent_semantics_system_prompt
+        prompt_template = cfg.eval.directional.graph_agent_semantics_prompt_template
+    else:
+        autoencoder_checkpoint_subdir = cfg.eval.directional.graph_agent_autoencoder_checkpoint_subdir
+        autoencoder_full_dim = cfg.eval.directional.graph_agent_autoencoder_full_dim
+        autoencoder_latent_dim = cfg.eval.directional.graph_agent_autoencoder_latent_dim
+        autoencoder_use_global_autoencoder = cfg.eval.directional.graph_agent_use_global_autoencoder
+        global_autoencoder_checkpoint_dir = cfg.eval.directional.graph_agent_global_autoencoder_checkpoint_dir
+        max_iterations = cfg.eval.directional.graph_agent_max_iterations
+        tool_config = cfg.eval.directional.graph_agent_tools
+        system_prompt = cfg.eval.directional.graph_agent_system_prompt
+        prompt_template = cfg.eval.directional.graph_agent_prompt_template
+
+    if autoencoder_use_global_autoencoder:
+        autoencoder_path = Path(cfg.preprocessed_root) / global_autoencoder_checkpoint_dir / "best_ckpt.pth"
+    else:
+        clip_dir = Path(cfg.preprocessed_root) / clip.name
+        autoencoder_path = clip_dir / autoencoder_checkpoint_subdir / "best_ckpt.pth"
+
+    autoencoder = QwenAutoencoder(
+        input_dim=autoencoder_full_dim,
+        latent_dim=autoencoder_latent_dim,
+    ).to(model.device)
+    autoencoder.load_state_dict(torch.load(autoencoder_path, map_location=model.device))
+    autoencoder.eval()
+
+    graph_tools = GraphTools(
+        positions=positions,
+        clusters=clusters,
+        centroids=node_centroids,
+        centers=node_centers,
+        extents=node_extents,
+        adjacency=adjacency,
+        bhattacharyya_coeffs=bhattacharyya_coeffs,
+        qwen_feats=node_feats_npz,
+        patch_latents_through_time=patch_latents_through_time,
+        autoencoder=autoencoder,
+    )
+
+    tool_viz_enabled = cfg.eval.directional.tool_viz_dir is not None
+    tool_viz_dir = None
+    if tool_viz_enabled:
+        tool_viz_dir = Path(cfg.eval.directional.tool_viz_dir) / clip.name
+        tool_viz_dir.mkdir(parents=True, exist_ok=True)
+
+    tool_names = []
+    tool_call_limits = {}
+    for tool_entry in tool_config:
+        tool_name = tool_entry.name
+        tool_names.append(tool_name)
+        max_calls = tool_entry.max_calls
+        if max_calls is not None:
+            tool_call_limits[tool_name] = max_calls
+
+    tools = graph_tools.get_tools_by_name(tool_names)
+    if len(tool_call_limits) == 0:
+        tool_call_limits = None
+
+    results = []
+    for query_anno in annotations:
+        query_id = query_anno["id"]
+        query = query_anno["query"]
+        temporal_range = query_anno["range"]
+
+        if tool_viz_enabled:
+            sanitized_question = re.sub(r"[^\w\s-]", "", query)
+            sanitized_question = re.sub(r"\s+", "_", sanitized_question)
+            sanitized_question = sanitized_question[:50]
+            rrd_file = tool_viz_dir / f"{query_id}_{sanitized_question}.rrd"
+            graph_tools.start_recording(str(rrd_file))
+
+        num_ts = graph_tools.adjacency.shape[0]
+        prompt = prompt_template.format(
+            question=query,
+            range_start=temporal_range[0],
+            range_end=temporal_range[1],
+            num_frames=num_ts,
+            last_frame=num_ts - 1,
+        )
+
+        initial_timestep_idx = temporal_range[0]
+        if use_semantic_labels:
+            agent_result = prompt_graph_agent_with_semantic_labels(
+                question=prompt,
+                initial_timestep_idx=initial_timestep_idx,
+                node_centers=point_o2n(node_centers),
+                node_centroids=point_o2n(node_centroids),
+                node_extents=distance_o2n(node_extents),
+                node_semantic_labels=node_semantic_labels,
+                model=model,
+                processor=processor,
+                tools=tools,
+                system_prompt=system_prompt,
+                max_iterations=max_iterations,
+                tool_call_limits=tool_call_limits,
+            )
+        else:
+            agent_result = prompt_graph_agent(
+                question=prompt,
+                node_feats=node_feats_npz,
+                initial_timestep_idx=initial_timestep_idx,
+                node_centers=point_o2n(node_centers),
+                node_centroids=point_o2n(node_centroids),
+                node_extents=distance_o2n(node_extents),
+                model=model,
+                processor=processor,
+                tools=tools,
+                system_prompt=system_prompt,
+                max_iterations=max_iterations,
+                tool_call_limits=tool_call_limits,
+            )
+
+        if tool_viz_enabled:
+            graph_tools.stop_recording()
+
+        json_data = parse_json(agent_result["final_answer"])
+        if json_data is None or "x" not in json_data or "y" not in json_data or "z" not in json_data:
+            prediction = None
+        else:
+            x_class = _parse_axis_class(json_data["x"])
+            y_class = _parse_axis_class(json_data["y"])
+            z_class = _parse_axis_class(json_data["z"])
+            if x_class is None or y_class is None or z_class is None:
+                prediction = None
+            else:
+                prediction = {
+                    "x": x_class,
+                    "y": y_class,
+                    "z": z_class,
+                }
+
+        results.append(
+            {
+                "id": query_id,
+                "query": query,
+                "range": temporal_range,
+                "predicted": prediction,
+                "raw_response": agent_result["final_answer"],
+                "message_history": agent_result["message_history"],
+                "tool_calls": sanitize_tool_calls(agent_result.get("tool_calls", [])),
+            }
+        )
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    del autoencoder
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return results

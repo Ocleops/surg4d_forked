@@ -1,9 +1,11 @@
 defaults:
-  # - temporal: default
+  - temporal: default
   - spatial: default
+  - directional: default
   - _self_
-temporal: null
+# temporal: null
 # spatial: null
+# directional: null
 
 annotations_root: data/annotations
 
@@ -12,4 +14,4 @@ annotation_stride: ${eval.annotation_stride}
 n_timesteps: ${eval.n_timesteps}
 
 # Required output directory for benchmark results
-output_dir: ${output_root}/metrics_tmp # ! tmp
+output_dir: ${output_root}/metrics_semantics_fixed_graphs_and_tools

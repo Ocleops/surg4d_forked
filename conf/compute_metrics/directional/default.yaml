@@ -1,0 +1,6 @@
+pred_root: ${eval.output_dir}/directional
+output_dir: ${compute_metrics.output_dir}/directional
+aggregated_output_filename: ${compute_metrics.directional.output_dir}/aggregated.json
+
+# Maximum possible mean axis-wise L1 distance with labels/preds in {-1,0,1}
+noprediction_error: 2.0

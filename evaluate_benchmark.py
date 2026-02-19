@@ -20,6 +20,7 @@ from benchmark.spatial import (
     frame_direct_feat_queries,
     graph_agent_feat_queries,
 )
+from benchmark.directional import graph_agent_directional_queries
 from benchmark.spatial_3d import splat_grid_feat_queries, splat_grid_temporal_queries
 
 
@@ -245,6 +246,71 @@ def evaluate_spatial(
                 )
 
 
+def evaluate_directional(
+    clip: DictConfig,
+    cfg: DictConfig,
+    model,
+    processor,
+):
+    if cfg.eval is None or cfg.eval.directional is None:
+        return
+
+    methods_to_run = set(cfg.eval.directional.methods)
+    graph_path = Path(cfg.output_root) / str(clip.name) / cfg.eval.paths.graph_subdir
+
+    directional_anno_file = Path(cfg.eval.annotations_root) / "directional" / f"{clip.name}.json"
+    with open(directional_anno_file) as f:
+        directional_data = json.load(f)
+    annotations = directional_data["annotations"]
+
+    method_map = {
+        "graph_agent": graph_agent_directional_queries,
+        "graph_agent_semantics": graph_agent_directional_queries,
+    }
+
+    all_results = {}
+    for method_name in cfg.eval.directional.methods:
+        if method_name not in method_map:
+            continue
+
+        strategy_fn = method_map[method_name]
+        results = strategy_fn(
+            model=model,
+            processor=processor,
+            graph_path=graph_path,
+            annotations=annotations,
+            clip=clip,
+            cfg=cfg,
+            use_semantic_labels=(method_name == "graph_agent_semantics"),
+        )
+        all_results[method_name] = results
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    preds_by_method: dict[str, list[dict]] = {}
+    for method_name, results in all_results.items():
+        preds_by_method[method_name] = [
+            {
+                "id": r.get("id"),
+                "query": r.get("query"),
+                "range": r.get("range"),
+                "predicted": r.get("predicted"),
+                "raw_response": r.get("raw_response"),
+                "message_history": r.get("message_history"),
+                "tool_calls": r.get("tool_calls"),
+            }
+            for r in results
+        ]
+
+    pred_out_dir = Path(cfg.eval.directional.output_dir)
+    pred_out_dir.mkdir(parents=True, exist_ok=True)
+    pred_out_file = pred_out_dir / f"{clip.name}.json"
+    with pred_out_file.open("w") as f:
+        json.dump({"clip": str(clip.name), "methods": preds_by_method}, f, indent=2)
+
+
 @hydra.main(config_path="conf", config_name="config.yaml", version_base="1.3")
 def main(cfg: DictConfig):
     # Deterministic Torch/CUDA setup
@@ -272,6 +338,11 @@ def main(cfg: DictConfig):
         if "splat_grid" in spatial_methods:
             needs_3d_model = True
 
+    if cfg.eval is not None and cfg.eval.directional is not None:
+        directional_methods = set(cfg.eval.directional.methods)
+        if directional_methods & {"graph_agent", "graph_agent_semantics"}:
+            needs_normal_model = True
+
     model, processor = None, None
     model_3d, processor_3d = None, None
 
@@ -297,6 +368,12 @@ def main(cfg: DictConfig):
             clip=clip, cfg=cfg,
             model=model, processor=processor,
             model_3d=model_3d, processor_3d=processor_3d,
+        )
+        evaluate_directional(
+            clip=clip,
+            cfg=cfg,
+            model=model,
+            processor=processor,
         )
 
 if __name__ == "__main__":
