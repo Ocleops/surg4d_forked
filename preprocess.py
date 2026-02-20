@@ -291,22 +291,6 @@ def get_cholecseg8k_frames(clip: DictConfig, cfg: DictConfig):
                 cv2.cvtColor(img_viz, cv2.COLOR_RGB2BGR),
             )
 
-def colmap_txt_to_bin(clip: DictConfig, cfg: DictConfig):
-    clip_dir = Path(cfg.preprocessed_root) / clip.name
-    output_dir = clip_dir / "sparse" / "0"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        "colmap",
-        "model_converter",
-        "--input_path",
-        str(clip_dir.resolve()),
-        "--output_path",
-        str(output_dir.resolve()),
-        "--output_type",
-        "BIN",
-    ]
-    subprocess.run(cmd, check=True)
-
 
 def delete_unused_files(clip: DictConfig, cfg: DictConfig):
     clip_dir = Path(cfg.preprocessed_root) / clip.name
