@@ -4,9 +4,6 @@ import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 from typing import List, Optional
 import re
-from sklearn.decomposition import PCA
-from scene.gaussian_model import GaussianModel
-from utils.sh_utils import SH2RGB
 
 
 def _compute_scene_extent(positions: np.ndarray) -> float:
@@ -25,59 +22,24 @@ def _compute_scene_extent(positions: np.ndarray) -> float:
     return float(extent)
 
 def log_points_through_time(
-    gaussians: GaussianModel,
     clusters: np.ndarray,
     cluster_colors: np.ndarray,
-    timesteps: np.ndarray,
     pos_through_time: np.ndarray,
+    point_colors: np.ndarray,
     cluster_pos_through_time: np.ndarray,
-    text_queries: list[str],
-    cluster_correspondences: np.ndarray,
-    patch_lf_through_time: np.ndarray,
-    instance_lf_through_time: np.ndarray,
     semantic_labels: dict[int, str] = None,
 ):
     """Log cluster pointclouds (points + cluster means) over time to Rerun.
 
     Args:
-        gaussians: Gaussian model containing color features used for point coloring.
         clusters: Array of cluster ids per gaussian (length = num_gaussians).
-        timesteps: Array of timesteps corresponding to positions.
         pos_through_time: Positions per timestep; shape (T, N, 3).
         cluster_pos_through_time: Cluster mean positions per timestep; shape (T, C, 3).
-        text_queries: List of text queries used for cluster correspondences.
-        cluster_correspondences: Cluster correspondences of shape (C, n_queries).
-        patch_lf_through_time: Patch language features per timestep; shape (T, N, D).
-        instance_lf_through_time: Instance language features per timestep; shape (T, N, D).
         semantic_labels: Optional dict mapping cluster_id -> semantic label string.
     """
     cluster_ids = np.unique(clusters)
 
-    # Convert SH DC coefficients to RGB in [0,255]
-    dc_sh = gaussians._features_dc.detach().cpu().numpy()  # (N, 1, 3)
-    cols_rgb = SH2RGB(dc_sh[:, 0, :])  # (N, 3) in [0,1] ideally
-    cols_rgb = (np.clip(cols_rgb, 0.0, 1.0) * 255.0).astype(np.uint8)
-
-    # Scale uniformity
-    uniformity = gaussians.get_scaling.min(dim=1).values / gaussians.get_scaling.max(dim=1).values
-    uniformity = (uniformity.detach().cpu().numpy() * 255.0).astype(np.uint8)
-    uniformity = np.repeat(uniformity[:, None], 3, axis=-1)
-    # print(np.histogram(uniformity, bins=10))
-
-    # Fit PCA once on all features across all timesteps for consistent visualization
-    pca_patch = None
-    pca_instance = None
-    if patch_lf_through_time.shape[-1] > 3:
-        # Flatten all timesteps to fit PCA on full distribution
-        all_patch_lf = patch_lf_through_time.reshape(-1, patch_lf_through_time.shape[-1])
-        pca_patch = PCA(n_components=3)
-        pca_patch.fit(all_patch_lf)
-    if instance_lf_through_time.shape[-1] > 3:
-        all_instance_lf = instance_lf_through_time.reshape(-1, instance_lf_through_time.shape[-1])
-        pca_instance = PCA(n_components=3)
-        pca_instance.fit(all_instance_lf)
-
-    for i in range(len(timesteps)):
+    for i in range(len(pos_through_time)):
         rr.set_time("timestep", sequence=i)
         pos = pos_through_time[i]
         cluster_means = cluster_pos_through_time[i]
@@ -86,50 +48,13 @@ def log_points_through_time(
         point_radius = max(scene_extent * 0.005, 1e-5)
         mean_radius = max(scene_extent * 0.015, point_radius * 3.0)
 
-        # Use timestep-specific language features if available
-        # Reduce to 3D for RGB visualization using pre-fitted PCA
-        cols_patch_t = patch_lf_through_time[i]
-        if pca_patch is not None:
-            cols_patch_t = pca_patch.transform(cols_patch_t)
-        cols_patch_t = (((cols_patch_t + 1.0) / 2.0).clip(0.0, 1.0) * 255.0).astype(np.uint8)
-        
-        cols_instance_t = instance_lf_through_time[i]
-        if pca_instance is not None:
-            cols_instance_t = pca_instance.transform(cols_instance_t)
-        cols_instance_t = (((cols_instance_t + 1.0) / 2.0).clip(0.0, 1.0) * 255.0).astype(np.uint8)
-
         rr.log(
             "rgb",
             rr.Points3D(
                 positions=pos,
-                colors=cols_rgb,
+                colors=point_colors,
                 radii=point_radius,
             ),
-        )
-        rr.log(
-            "qwen_patch",
-            rr.Points3D(
-                positions=pos,
-                colors=cols_patch_t,
-                radii=point_radius,
-            ),
-        )
-        rr.log(
-            "qwen_instance",
-            rr.Points3D(
-                positions=pos,
-                colors=cols_instance_t,
-                radii=point_radius,
-            ),
-        )
-
-        rr.log(
-            "uniformity",
-            rr.Points3D(
-                positions=pos,
-                colors=uniformity,
-                radii=point_radius
-            )
         )
 
         # Log individual cluster points
@@ -146,20 +71,7 @@ def log_points_through_time(
         # Log cluster means
         mean_colors = np.stack([cluster_colors[clusters == c][0] for c in cluster_ids])
         mean_labels = None
-        if text_queries is not None and cluster_correspondences is not None:
-            mean_labels = []
-            for c in cluster_ids:
-                label_parts = []
-                # Add semantic label first if available
-                if semantic_labels is not None and c in semantic_labels:
-                    label_parts.append(f"Semantic: {semantic_labels[c]}")
-                # Add text query correspondences
-                label_parts.extend([
-                    f"{text_queries[i]}\t\t{cluster_correspondences[i, c]:.2f}"
-                    for i in range(len(text_queries))
-                ])
-                mean_labels.append("\n".join(label_parts))
-        elif semantic_labels is not None:
+        if semantic_labels is not None:
             # Only semantic labels, no text queries
             mean_labels = []
             for c in cluster_ids:
@@ -176,111 +88,6 @@ def log_points_through_time(
             show_labels=False,
         )
         rr.log("clusters/means", means_viz)
-
-# def log_points_through_time(
-#     gaussians_rgb,
-#     gaussians_qwen_patch,
-#     gaussians_qwen_instance,
-#     clusters: np.ndarray,
-#     cluster_colors: np.ndarray,
-#     timesteps: np.ndarray,
-#     pos_through_time: np.ndarray,
-#     cluster_pos_through_time: np.ndarray,
-#     text_queries: list[str],
-#     cluster_correspondences: np.ndarray,
-# ):
-#     """Log cluster pointclouds (points + cluster means) over time to Rerun.
-
-#     Args:
-#         gaussians: Gaussian model containing color features used for point coloring.
-#         clusters: Array of cluster ids per gaussian (length = num_gaussians).
-#         timesteps: Array of timesteps corresponding to positions.
-#         pos_through_time: Positions per timestep; shape (T, N, 3).
-#         cluster_pos_through_time: Cluster mean positions per timestep; shape (T, C, 3).
-#         text_queries: List of text queries used for cluster correspondences.
-#         cluster_correspondences: Cluster correspondences of shape (C, n_queries).
-#     """
-#     cluster_ids = np.unique(clusters)
-
-#     # Convert SH DC coefficients to RGB in [0,255]
-#     dc_sh = gaussians_rgb._features_dc.detach().cpu().numpy()  # (N, 1, 3)
-#     cols_rgb = SH2RGB(dc_sh[:, 0, :])  # (N, 3) in [0,1] ideally
-#     cols_rgb = (np.clip(cols_rgb, 0.0, 1.0) * 255.0).astype(np.uint8)
-
-#     # Language features assumed to be in roughly [-1,1] → map to [0,255]
-#     cols_patch = gaussians_qwen_patch.get_language_feature.detach().cpu().numpy()
-#     cols_patch = (((cols_patch + 1.0) / 2.0).clip(0.0, 1.0) * 255.0).astype(np.uint8)
-
-#     cols_instance = gaussians_qwen_instance.get_language_feature.detach().cpu().numpy()
-#     cols_instance = (((cols_instance + 1.0) / 2.0).clip(0.0, 1.0) * 255.0).astype(np.uint8)
-
-#     for i in range(len(timesteps)):
-#         rr.set_time("timestep", sequence=i)
-#         pos = pos_through_time[i]
-#         cluster_means = cluster_pos_through_time[i]
-
-#         scene_extent = _compute_scene_extent(pos)
-#         point_radius = max(scene_extent * 0.005, 1e-5)
-#         mean_radius = max(scene_extent * 0.015, point_radius * 3.0)
-
-#         rr.log(
-#             "rgb",
-#             rr.Points3D(
-#                 positions=pos,
-#                 colors=cols_rgb,
-#                 radii=point_radius,
-#             ),
-#         )
-#         rr.log(
-#             "qwen_patch",
-#             rr.Points3D(
-#                 positions=pos,
-#                 colors=cols_patch,
-#                 radii=point_radius,
-#             ),
-#         )
-#         rr.log(
-#             "qwen_instance",
-#             rr.Points3D(
-#                 positions=pos,
-#                 colors=cols_instance,
-#                 radii=point_radius,
-#             ),
-#         )
-
-#         # Log individual cluster points
-#         for c in cluster_ids:
-#             rr.log(
-#                 f"clusters/points/{c}",
-#                 rr.Points3D(
-#                     positions=pos[clusters == c],
-#                     colors=cluster_colors[clusters == c],
-#                     radii=point_radius,
-#                 ),
-#             )
-
-#         # Log cluster means
-#         mean_colors = np.stack([cluster_colors[clusters == c][0] for c in cluster_ids])
-#         mean_labels = None
-#         if text_queries is not None and cluster_correspondences is not None:
-#             mean_labels = []
-#             for c in cluster_ids:
-#                 mean_labels.append(
-#                     "\n".join(
-#                         [
-#                             f"{text_queries[i]}\t\t{cluster_correspondences[i, c]:.2f}"
-#                             for i in range(len(text_queries))
-#                         ]
-#                     )
-#                 )
-#         means_viz = rr.Points3D(
-#             positions=cluster_means,
-#             colors=mean_colors,
-#             radii=mean_radius,
-#             labels=mean_labels,
-#             show_labels=False,
-#         )
-#         rr.log("clusters/means", means_viz)
 
 
 def log_graph_structure_through_time(
