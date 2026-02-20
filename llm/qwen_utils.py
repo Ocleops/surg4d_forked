@@ -330,8 +330,11 @@ def model_inputs(
     vision_features: List[torch.Tensor],
     processor: Qwen3VLProcessor,
     tools: List[Dict[str, Any]] = [],
+    raw_images: Optional[List[Image.Image]] = None,
 ):
     """Prepare model inputs from messages and vision features."""
+    if raw_images is None:
+        raw_images = []
     # make sure number of messages and vision feature sets match
     n_msg_images = sum(
         1
@@ -340,8 +343,9 @@ def model_inputs(
         for part in msg.get("content", [])
         if part.get("type") == "image"
     )
-    assert n_msg_images == len(vision_features), (
-        f"number of image messages ({n_msg_images}) and vision features ({len(vision_features)}) must match"
+    expected_images = len(vision_features) + len(raw_images)
+    assert n_msg_images == expected_images, (
+        f"number of image messages ({n_msg_images}) and provided images ({expected_images}) must match"
     )
 
     # create actual text template from messages dict
@@ -370,8 +374,9 @@ def model_inputs(
         "return_tensors": "pt",
         "do_resize": False,
     }
-    if mock_images:
-        processor_kwargs["images"] = mock_images
+    all_images = mock_images + raw_images
+    if all_images:
+        processor_kwargs["images"] = all_images
 
     inputs = processor(**processor_kwargs)
 
@@ -419,12 +424,17 @@ def generate_with_vision_features(
         messages, main_features, processor
     ).to(model.device)
 
+    has_images = len(vision_features) > 0
+    effective_zero_positional_encodings = (
+        False if has_images else zero_positional_encodings
+    )
+
     _set_generation_seed(seed)
     generate_kwargs = {
         "max_new_tokens": max_new_tokens,
         "custom_patch_features": main_features,
         "custom_deepstack_features": deepstack_features,
-        "zero_image_hw": zero_positional_encodings,
+        "zero_image_hw": effective_zero_positional_encodings,
     }
     if logits_processor is not None:
         generate_kwargs["logits_processor"] = logits_processor
@@ -473,7 +483,7 @@ def _extract_final_answer(response: str) -> str:
 
 def build_tool_response_message(
     tool_results: List[Dict[str, Any]],
-) -> Tuple[Dict[str, Any], List[torch.Tensor]]:
+) -> Tuple[Dict[str, Any], List[torch.Tensor], List[Image.Image]]:
     """Build a user message containing tool responses with interleaved text and images.
 
     Takes a list of tool result records and constructs a message in the format expected
@@ -490,12 +500,14 @@ def build_tool_response_message(
                   at IMAGE_PLACEHOLDER positions. Each tensor is (N, hidden_dim * 4) in
                   concatenated format [main | d0 | d1 | d2].
 
-    Returns:
-        Tuple of (message, vision_features) where:
+        Returns:
+                Tuple of (message, vision_features, images) where:
             - message: Dict with "role": "user" and "content" list containing interleaved
               {"type": "text", "text": ...} and {"type": "image", "image": None} entries
-            - vision_features: List of all vision feature tensors from all tools,
-              in the order they appear in the message (matching image placeholder order)
+                        - vision_features: List of all vision feature tensors from all tools,
+                            in the order they appear in the message (matching image placeholder order)
+                        - images: List of raw PIL images from all tools, in the order they
+                            appear in the message (after vision_features per tool)
 
     Example:
         Tool returns: {"text": '{"node": "<image/>"}', "vision_features": [tensor]}
@@ -509,10 +521,11 @@ def build_tool_response_message(
 
     Raises:
         AssertionError: If number of IMAGE_PLACEHOLDER markers doesn't match
-            number of vision_features for any tool.
+            number of media items (vision_features + images) for any tool.
     """
     content = []
     all_vision_features = []
+    all_images = []
 
     for record in tool_results:
         result = record["result"]
@@ -523,16 +536,23 @@ def build_tool_response_message(
             f"</tool_response>"
         )
 
-        if "vision_features" in result:
-            tool_features = result["vision_features"]
-            if not isinstance(tool_features, list):
-                tool_features = [tool_features]
+        tool_features = result.get("vision_features", [])
+        if not isinstance(tool_features, list):
+            tool_features = [tool_features]
+
+        tool_images = result.get("images", [])
+        if not isinstance(tool_images, list):
+            tool_images = [tool_images]
+
+        if tool_features or tool_images:
+            n_tool_media = len(tool_features) + len(tool_images)
+            tool_media = tool_features + tool_images
 
             # Split text by IMAGE_PLACEHOLDER and interleave with image placeholders
             parts = tool_response_text.split(IMAGE_PLACEHOLDER)
             n_markers = len(parts) - 1
-            assert n_markers == len(tool_features), (
-                f"Tool {record['tool_name']} returned {len(tool_features)} vision_features "
+            assert n_markers == n_tool_media, (
+                f"Tool {record['tool_name']} returned {n_tool_media} media items "
                 f"but text contains {n_markers} IMAGE_PLACEHOLDER markers"
             )
 
@@ -541,22 +561,25 @@ def build_tool_response_message(
             for i, part in enumerate(parts):
                 if part:
                     content.append({"type": "text", "text": part})
-                if i < len(tool_features):
+                if i < len(tool_media):
                     content.append({"type": "image", "image": None})
 
             all_vision_features.extend(tool_features)
+            all_images.extend(tool_images)
         else:
             # No vision features - just add the text
             content.append({"type": "text", "text": tool_response_text})
 
     message = {"role": "user", "content": content}
-    return message, all_vision_features
+    return message, all_vision_features, all_images
 
 
 def _filter_tensors_for_debug(obj: Any) -> Any:
     """Recursively filter out tensors and numpy arrays from objects for debugging."""
     if isinstance(obj, (torch.Tensor, np.ndarray, np.generic)):
         return None  # Skip tensors/arrays
+    elif isinstance(obj, Image.Image):
+        return f"<PIL.Image size={obj.size}>"
     elif isinstance(obj, dict):
         filtered = {}
         for k, v in obj.items():
@@ -731,6 +754,7 @@ def generate_with_vision_features_agentic(
     # Track all vision features (initial + those added by tools)
     # Keep in concatenated format, convert to deepstack before each generation
     all_vision_features = list(vision_features)
+    all_raw_images: List[Image.Image] = []
 
     # Track generation timing and tokens for tok/s calculation
     total_generation_time = 0.0
@@ -757,6 +781,7 @@ def generate_with_vision_features_agentic(
             main_features,
             processor,
             tools=tool_specs,
+            raw_images=all_raw_images,
         ).to(model.device)
 
         # Build logits processor for thinking budget (new each iteration due to internal state)
@@ -770,12 +795,21 @@ def generate_with_vision_features_agentic(
         try:
             _set_generation_seed(seed + iteration)
             gen_start_time = time.time()
+            has_images = (len(all_vision_features) > 0) or (len(all_raw_images) > 0)
+            effective_zero_positional_encodings = (
+                False if has_images else zero_positional_encodings
+            )
             generate_kwargs = {
                 "max_new_tokens": max_new_tokens,
-                "custom_patch_features": main_features,
-                "custom_deepstack_features": deepstack_features,
-                "zero_image_hw": zero_positional_encodings,
+                "zero_image_hw": effective_zero_positional_encodings,
             }
+            if main_features:
+                assert not all_raw_images, (
+                    "Mixed custom vision features and raw tool images are not supported in one context. "
+                    "Use raw images with semantic-label graph agent mode (no initial feature images)."
+                )
+                generate_kwargs["custom_patch_features"] = main_features
+                generate_kwargs["custom_deepstack_features"] = deepstack_features
             if logits_processor is not None:
                 generate_kwargs["logits_processor"] = logits_processor
             generated_ids = model.generate(**inputs, **generate_kwargs)
@@ -924,9 +958,10 @@ def generate_with_vision_features_agentic(
             tool_results.append(tool_call_record)
 
         # Build tool response message and collect vision features
-        tool_response_message, new_features = build_tool_response_message(tool_results)
+        tool_response_message, new_features, new_images = build_tool_response_message(tool_results)
         current_messages.append(tool_response_message)
         all_vision_features.extend(new_features)
+        all_raw_images.extend(new_images)
 
     # Max iterations reached - try to extract any answer from the last response
     final_answer = _extract_final_answer(response)

@@ -107,8 +107,8 @@ def graph_agent_directional_queries(
     annotations: List[Dict[str, Any]],
     clip: DictConfig,
     cfg: DictConfig,
+    video_frames: List[Path],
     use_semantic_labels: bool = True,
-    video_frames: List[Path] = None,
 ) -> List[Dict[str, Any]]:
     """Run directional graph-agent queries with tools.
 
@@ -186,6 +186,8 @@ def graph_agent_directional_queries(
         qwen_feats=node_feats_npz,
         patch_latents_through_time=patch_latents_through_time,
         autoencoder=autoencoder,
+        video_frames=video_frames,
+        annotation_stride=cfg.eval.annotation_stride,
     )
 
     tool_viz_enabled = cfg.eval.directional.tool_viz_dir is not None

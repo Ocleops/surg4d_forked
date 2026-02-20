@@ -118,6 +118,7 @@ def multiframe_queries(
     annotations: List[Dict],
     clip: "DictConfig",
     cfg: "DictConfig",
+    use_semantic_labels: bool = False,
 ) -> List[Dict]:
     """Run multiframe (video-only) temporal queries.
     
@@ -207,7 +208,7 @@ def graph_agent_queries(
     annotations: List[Dict],
     clip: "DictConfig",
     cfg: "DictConfig",
-    video_frames: List[Path] = None, # not used in this function, but required for compatibility with other functions
+    video_frames: List[Path],
     use_semantic_labels: bool = False,
 ) -> List[Dict]:
     """Run graph agent temporal queries with tools.
@@ -302,6 +303,8 @@ def graph_agent_queries(
         qwen_feats=node_feats_npz,
         patch_latents_through_time=patch_latents_through_time,
         autoencoder=autoencoder,
+        video_frames=video_frames,
+        annotation_stride=cfg.eval.annotation_stride,
     )
     
     # Setup tool visualization directory if configured

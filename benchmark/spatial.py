@@ -229,6 +229,9 @@ def graph_agent_feat_queries(
     autoencoder.eval()
 
     # Create GraphTools instance for tool management
+    images_dir = Path(cfg.preprocessed_root) / clip.name / cfg.eval.paths.images_subdir
+    video_frames = sorted(list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.png")))
+
     graph_tools = GraphTools(
         positions=positions,
         clusters=clusters,
@@ -240,6 +243,8 @@ def graph_agent_feat_queries(
         qwen_feats=node_feats_npz,
         patch_latents_through_time=patch_latents_through_time,
         autoencoder=autoencoder,
+        video_frames=video_frames,
+        annotation_stride=cfg.eval.annotation_stride,
     )
 
     # Setup tool visualization directory if configured
@@ -385,6 +390,7 @@ def frame_direct_feat_queries(
     clip_gt: Dict[str, Any],
     clip: DictConfig,
     cfg: DictConfig,
+    use_semantic_labels: bool = False,
 ):
     """Run direct Qwen prompting on the frame to return a single pixel per query."""
     images_dir = Path(preprocessed_root) / clip.name / images_subdir

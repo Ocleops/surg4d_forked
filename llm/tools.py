@@ -1,10 +1,12 @@
 import json
 import torch
 import numpy as np
+from pathlib import Path
 from functools import partial
 from typing import Dict, Any, List, Callable, Tuple, Optional
 from scipy.spatial import KDTree
 import rerun as rr
+from PIL import Image
 
 from benchmark.graph_utils import get_coord_transformations
 from autoencoder.model_qwen import QwenAutoencoder
@@ -792,6 +794,70 @@ spec_inspect_scene_at_time = {
         },
     },
 }
+
+
+spec_show_scene_at_timestep = {
+    "type": "function",
+    "function": {
+        "name": "show_scene_at_timestep",
+        "description": "Returns the original video frame for a given graph timestep index.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "timestep_idx": {
+                    "type": "integer",
+                    "description": "Graph timestep index",
+                },
+            },
+            "required": ["timestep_idx"],
+        },
+    },
+}
+
+
+def show_scene_at_timestep(
+    video_frames: List[Path],
+    annotation_stride: int,
+    timestep_idx: int,
+) -> Dict[str, Any]:
+    """Return the RGB video frame corresponding to a graph timestep.
+
+    Resolves frame_number = timestep_idx * annotation_stride and returns the
+    actual image payload so the agent loop can inject it as visual context.
+    """
+    if timestep_idx < 0:
+        return {
+            "text": json.dumps(
+                {"error": f"timestep_idx={timestep_idx} must be >= 0"}
+            )
+        }
+
+    frame_number = int(timestep_idx) * int(annotation_stride)
+    if frame_number >= len(video_frames):
+        return {
+            "text": json.dumps(
+                {
+                    "error": (
+                        f"resolved frame_number={frame_number} out of range "
+                        f"for {len(video_frames)} available frames"
+                    )
+                }
+            )
+        }
+
+    frame_path = Path(video_frames[frame_number])
+    with Image.open(frame_path) as frame_img:
+        rgb_frame = frame_img.convert("RGB").copy()
+
+    payload = {
+        "timestep_idx": int(timestep_idx),
+        "frame": IMAGE_PLACEHOLDER,
+    }
+    return {
+        "text": json.dumps(payload),
+        "images": [rgb_frame],
+        "image_paths": [str(frame_path)],
+    }
 
 
 def inspect_scene_at_time(
@@ -1601,6 +1667,8 @@ class GraphTools:
         qwen_feats,
         patch_latents_through_time: np.ndarray,
         autoencoder: QwenAutoencoder,
+        video_frames: List[Path],
+        annotation_stride: int,
     ):
         self.positions = positions
         self.clusters = clusters
@@ -1612,6 +1680,8 @@ class GraphTools:
         self.qwen_feats = qwen_feats
         self.patch_latents_through_time = patch_latents_through_time
         self.autoencoder = autoencoder
+        self.video_frames = [Path(frame) for frame in video_frames]
+        self.annotation_stride = int(annotation_stride)
 
         self.point_o2n, self.point_n2o, self.distance_o2n, self.distance_n2o = (
             get_coord_transformations(positions)
@@ -1802,6 +1872,14 @@ class GraphTools:
                     toolkit=self,
                 ),
                 spec_aggregated_node_movement,
+            ),
+            "show_scene_at_timestep": (
+                partial(
+                    show_scene_at_timestep,
+                    video_frames=self.video_frames,
+                    annotation_stride=self.annotation_stride,
+                ),
+                spec_show_scene_at_timestep,
             ),
         }
 

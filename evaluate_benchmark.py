@@ -263,7 +263,7 @@ def evaluate_directional(
     video_dir = Path(cfg.preprocessed_root) / str(clip.name)
 
     video_frames = None
-    if "multiframe" in methods_to_run:
+    if methods_to_run & {"multiframe", "graph_agent", "graph_agent_semantics"}:
         video_frames, _ = load_video_frames(video_dir, cfg.eval.paths.images_subdir)
 
     directional_anno_file = Path(cfg.eval.annotations_root) / "directional" / f"{clip.name}.json"
