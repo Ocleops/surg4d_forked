@@ -340,11 +340,11 @@ def compute_semantic_labels_for_merged_instances(
     Returns:
         Dictionary mapping merged instance ID -> semantic label string
     """
-    semantic_mask_dir = clip_dir / cfg.preprocessing.semantic_mask_subdir
-    instance_mask_dir = clip_dir / cfg.preprocessing.instance_mask_subdir
+    semantic_mask_dir = clip_dir / cfg.track_objects.semantic_mask_subdir
+    instance_mask_dir = clip_dir / cfg.track_objects.instance_mask_subdir
 
     # Account for densification when mapping gaussians to views
-    densify_ratio = cfg.preprocessing.da3_densify_ratio
+    densify_ratio = cfg.track_objects.da3_densify_ratio
     view_offsets = [0]
     for n_gaussians_frame in gaussians_per_frame:
         view_offsets.append(view_offsets[-1] + n_gaussians_frame * densify_ratio)
@@ -438,16 +438,16 @@ def compute_semantic_labels_for_merged_instances(
     return semantic_labels
 
 
-def process_clip_cotracker(clip: DictConfig, cfg: DictConfig):
+def track_objects(clip: DictConfig, cfg: DictConfig):
     """Process a single clip to extract CoTracker3 control points."""
     clip_dir = Path(cfg.preprocessed_root) / clip.name
     images_dir = clip_dir / "images"
-    depth_processed_dir = clip_dir / cfg.preprocessing.depth_processed_subdir
-    instance_mask_dir = clip_dir / cfg.preprocessing.instance_mask_subdir
-    semantic_mask_dir = clip_dir / cfg.preprocessing.semantic_mask_subdir
+    depth_processed_dir = clip_dir / cfg.track_objects.depth_processed_subdir
+    instance_mask_dir = clip_dir / cfg.track_objects.instance_mask_subdir
+    semantic_mask_dir = clip_dir / cfg.track_objects.semantic_mask_subdir
     
     # Output directory for CoTracker data
-    cotracker_dir = clip_dir / cfg.preprocessing.cotracker_subdir
+    cotracker_dir = clip_dir / cfg.track_objects.cotracker_subdir
     cotracker_dir.mkdir(parents=True, exist_ok=True)
     
     if not images_dir.exists():
@@ -482,7 +482,7 @@ def process_clip_cotracker(clip: DictConfig, cfg: DictConfig):
     logger.info("Running CoTracker3...")
     control_points_2d, visibility = track_control_points(
         image_files,
-        n_points_per_frame=cfg.preprocessing.cotracker_n_points_per_frame,
+        n_points_per_frame=cfg.track_objects.cotracker_n_points_per_frame,
         save_dir=cotracker_dir,
     )
     # shape of control points: (T, N_total, 2) where N_total = n_points_per_frame * 3
@@ -491,7 +491,7 @@ def process_clip_cotracker(clip: DictConfig, cfg: DictConfig):
     # Lift control points to 3D using DA3 depth and camera parameters
     logger.info("Lifting control points to 3D...")
     colmap_dir = clip_dir / "sparse" / "0"
-    depth_jump_threshold = cfg.preprocessing.cotracker_depth_jump_threshold
+    depth_jump_threshold = cfg.track_objects.cotracker_depth_jump_threshold
     control_points_3d, control_points_2d = lift_control_points_to_3d(
         control_points_2d,
         visibility,
@@ -516,7 +516,7 @@ def process_clip_cotracker(clip: DictConfig, cfg: DictConfig):
     logger.info(f"Computing associations for init frames: {init_frame_indices}")
     
     # Load confidence directory for filtering (matches da3_to_multi_view_colmap filtering)
-    confidence_dir = clip_dir / cfg.preprocessing.confidence_subdir
+    confidence_dir = clip_dir / cfg.track_objects.confidence_subdir
     
     # Compute associations for each init frame and concatenate
     all_indices = []
@@ -536,11 +536,11 @@ def process_clip_cotracker(clip: DictConfig, cfg: DictConfig):
             image_files,
             init_frame_idx,
             instance_masks[init_frame_idx] if instance_masks is not None else None,
-            k_neighbors=cfg.preprocessing.cotracker_k_neighbors,
-            idw_power=cfg.preprocessing.cotracker_idw_power,
-            pixel_stride=cfg.preprocessing.da3_pc_pixel_stride,
+            k_neighbors=cfg.track_objects.cotracker_k_neighbors,
+            idw_power=cfg.track_objects.cotracker_idw_power,
+            pixel_stride=cfg.track_objects.da3_pc_pixel_stride,
             confidence_dir=confidence_dir,
-            conf_thresh_percentile=cfg.preprocessing.da3_conf_thresh_percentile,
+            conf_thresh_percentile=cfg.track_objects.da3_conf_thresh_percentile,
         )
         
         all_indices.append(associations["indices"])
@@ -561,13 +561,13 @@ def process_clip_cotracker(clip: DictConfig, cfg: DictConfig):
     combined_frame_indices = torch.cat(all_frame_indices, dim=0)  # (N_total,)
 
     # Densify associations if needed
-    if cfg.preprocessing.da3_densify_ratio > 1:
+    if cfg.track_objects.da3_densify_ratio > 1:
         # This works because torch.repeat behaves like np.tile
-        combined_indices = combined_indices.repeat(cfg.preprocessing.da3_densify_ratio, 1)
-        combined_weights = combined_weights.repeat(cfg.preprocessing.da3_densify_ratio, 1)
-        combined_instance_ids = combined_instance_ids.repeat(cfg.preprocessing.da3_densify_ratio)
-        combined_pixel_coords = combined_pixel_coords.repeat(cfg.preprocessing.da3_densify_ratio, 1)
-        combined_frame_indices = combined_frame_indices.repeat(cfg.preprocessing.da3_densify_ratio)
+        combined_indices = combined_indices.repeat(cfg.track_objects.da3_densify_ratio, 1)
+        combined_weights = combined_weights.repeat(cfg.track_objects.da3_densify_ratio, 1)
+        combined_instance_ids = combined_instance_ids.repeat(cfg.track_objects.da3_densify_ratio)
+        combined_pixel_coords = combined_pixel_coords.repeat(cfg.track_objects.da3_densify_ratio, 1)
+        combined_frame_indices = combined_frame_indices.repeat(cfg.track_objects.da3_densify_ratio)
 
     total_gaussians = combined_indices.shape[0]
     logger.info(f"Total Gaussians from all frames: {total_gaussians}")
@@ -609,7 +609,7 @@ def process_clip_cotracker(clip: DictConfig, cfg: DictConfig):
     offset = 0
     for frame_idx, n_gaussians_frame in zip(init_frame_indices, gaussians_per_frame):
         # Account for densification
-        n_gaussians_densified = n_gaussians_frame * cfg.preprocessing.da3_densify_ratio
+        n_gaussians_densified = n_gaussians_frame * cfg.track_objects.da3_densify_ratio
         
         # Extract data for this view
         view_instance_ids = combined_instance_ids[offset:offset + n_gaussians_densified]
@@ -653,8 +653,8 @@ def process_clip_cotracker(clip: DictConfig, cfg: DictConfig):
     # Merge instances across views
     logger.info(
         f"Merging instances across views "
-        f"(threshold={cfg.preprocessing.instance_merge_containment_threshold}, "
-        f"radius={cfg.preprocessing.instance_merge_containment_radius})..."
+        f"(threshold={cfg.track_objects.instance_merge_containment_threshold}, "
+        f"radius={cfg.track_objects.instance_merge_containment_radius})..."
     )
     logger.info(f"Number of views: {len(per_view_data)}")
     for i, view_data in enumerate(per_view_data):
@@ -666,8 +666,8 @@ def process_clip_cotracker(clip: DictConfig, cfg: DictConfig):
     merged_instance_ids = merge_instances_across_views(
         per_view_data=per_view_data,
         reference_timestep=reference_timestep,
-        containment_threshold=cfg.preprocessing.instance_merge_containment_threshold,
-        containment_radius=cfg.preprocessing.instance_merge_containment_radius,
+        containment_threshold=cfg.track_objects.instance_merge_containment_threshold,
+        containment_radius=cfg.track_objects.instance_merge_containment_radius,
         view_semantic_maps=view_semantic_maps,
     )
     
@@ -732,7 +732,7 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     
     for clip in tqdm(cfg.clips, desc="Processing clips", unit="clip"):
-        process_clip_cotracker(clip, cfg)
+        track_objects(clip, cfg)
 
 
 if __name__ == "__main__":

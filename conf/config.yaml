@@ -1,6 +1,8 @@
 defaults:
   - clips: final_dataset_first
-  - preprocessing: qwen3
+  - preprocess: qwen3
+  - extract_geometry: qwen3
+  - track_objects: qwen3
   - graph_extraction: precomputed_qwen3
   - eval: default
   - compute_metrics: default

@@ -1,0 +1,14 @@
+semantic_mask_subdir: semantic_masks
+instance_mask_subdir: instance_masks
+
+annotation_root: data/annotations
+annotation_stride: 4
+spatial_labels_output_filename: spatial_annotations.json
+dump_label_visualizations: true
+label_viz_subdir: label_viz
+
+frames_divisor: 32
+
+min_component_area: 5
+
+only_update_annotations: false

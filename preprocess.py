@@ -5,15 +5,11 @@ from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 import hydra
 import shutil
-import torch
-from loguru import logger
 import cv2
 import json
 import re
-from depth_anything_3.api import DepthAnything3
 
 from cholec_utils import get_clip_seg8k, parse_cholecseg8k_instance_mask
-from da3_utils import da3_to_multi_view_colmap, filter_prediction_edge_artifacts
 
 
 def extract_frame_number(filepath: Path) -> int:
@@ -109,7 +105,7 @@ def _load_and_translate_spatial_labels(
       - translated_labels_json (dict): same schema filtered and updated
       - per_frame_points (dict[int, list[tuple[int,int,str]]]): for visualization
     """
-    labels_path = Path(cfg.preprocessing.annotation_root) / "spatial" / f"{clip.name}.json"
+    labels_path = Path(cfg.preprocess.annotation_root) / "spatial" / f"{clip.name}.json"
     if not labels_path.exists():
         return {}, {}
 
@@ -120,7 +116,7 @@ def _load_and_translate_spatial_labels(
     top, bottom, left, right = crop_box
     cropped_h = bottom - top
     cropped_w = right - left
-    off_y, off_x = _compute_center_crop_offsets(cropped_h, cropped_w, cfg.preprocessing.frames_divisor)
+    off_y, off_x = _compute_center_crop_offsets(cropped_h, cropped_w, cfg.preprocess.frames_divisor)
     final_h = cropped_h - 2 * off_y
     final_w = cropped_w - 2 * off_x
 
@@ -149,7 +145,7 @@ def _load_and_translate_spatial_labels(
         translated_annotations.append(new_annotation)
 
         # For visualization
-        per_frame_points.setdefault(int(annotation["timestep"] * cfg.preprocessing.annotation_stride), []).append((x_new, y_new, new_annotation["query"], "spatial"))
+        per_frame_points.setdefault(int(annotation["timestep"] * cfg.preprocess.annotation_stride), []).append((x_new, y_new, new_annotation["query"], "spatial"))
 
     translated = {"annotations": translated_annotations}
 
@@ -186,19 +182,19 @@ def _render_label_visualization(
     return img_viz
 
 
-def get_cholecseg8k_frames(clip: DictConfig, cfg: DictConfig):
+def preprocess(clip: DictConfig, cfg: DictConfig):
     clip_dir = Path(cfg.preprocessed_root) / clip.name
 
-    only_update_annotations = cfg.preprocessing.get("only_update_annotations", False)
+    only_update_annotations = cfg.preprocess.only_update_annotations
 
     if not only_update_annotations:
         out_images = clip_dir / "images"
         out_images.mkdir(parents=True, exist_ok=True)
 
-        out_sem_masks = clip_dir / cfg.preprocessing.semantic_mask_subdir
+        out_sem_masks = clip_dir / cfg.preprocess.semantic_mask_subdir
         out_sem_masks.mkdir(parents=True, exist_ok=True)
 
-        out_inst_masks = clip_dir / cfg.preprocessing.instance_mask_subdir
+        out_inst_masks = clip_dir / cfg.preprocess.instance_mask_subdir
         out_inst_masks.mkdir(parents=True, exist_ok=True)
 
     frame_files, semantic_mask_files = get_clip_seg8k(
@@ -220,13 +216,13 @@ def get_cholecseg8k_frames(clip: DictConfig, cfg: DictConfig):
         crop_box=(top, bottom, left, right),
     )
     if translated_labels:
-        labels_out_path = clip_dir / cfg.preprocessing.spatial_labels_output_filename
+        labels_out_path = clip_dir / cfg.preprocess.spatial_labels_output_filename
         with open(labels_out_path, "w") as f:
             json.dump(translated_labels, f, indent=2)
 
     # Create visualization directory once if needed
-    if cfg.preprocessing.get("dump_label_visualizations", False) and viz_points:
-        viz_dir = clip_dir / cfg.preprocessing.get("label_viz_subdir", "label_viz")
+    if cfg.preprocess.dump_label_visualizations and viz_points:
+        viz_dir = clip_dir / cfg.preprocess.label_viz_subdir
         if viz_dir.exists():
             shutil.rmtree(viz_dir)
         viz_dir.mkdir(parents=True)
@@ -242,9 +238,9 @@ def get_cholecseg8k_frames(clip: DictConfig, cfg: DictConfig):
         rgb = np.asarray(rgb)[top:bottom, left:right]
         class_ids = class_ids[top:bottom, left:right]
         rgb = center_crop_divisible(
-            rgb, cfg.preprocessing.frames_divisor, skip_last_dim=True
+            rgb, cfg.preprocess.frames_divisor, skip_last_dim=True
         )  # required for qwen encoder
-        class_ids = center_crop_divisible(class_ids, cfg.preprocessing.frames_divisor)
+        class_ids = center_crop_divisible(class_ids, cfg.preprocess.frames_divisor)
 
         if not only_update_annotations:
             # Generate instance masks from semantic masks using connected components
@@ -264,7 +260,7 @@ def get_cholecseg8k_frames(clip: DictConfig, cfg: DictConfig):
                     component_mask = labeled_components == component_id
                     component_area = component_mask.sum()
                     # Filter out tiny components (noise)
-                    if component_area < cfg.preprocessing.min_component_area:
+                    if component_area < cfg.preprocess.min_component_area:
                         continue
                     instance_ids[component_mask] = instance_counter
                     instance_counter += 1
@@ -276,138 +272,15 @@ def get_cholecseg8k_frames(clip: DictConfig, cfg: DictConfig):
 
         # Optional visualization of labels on preprocessed frames
         if (
-            cfg.preprocessing.get("dump_label_visualizations", False)
+            cfg.preprocess.dump_label_visualizations
             and new_frame_id in viz_points
         ):
-            viz_dir = clip_dir / cfg.preprocessing.get("label_viz_subdir", "label_viz")
+            viz_dir = clip_dir / cfg.preprocess.label_viz_subdir
             img_viz = _render_label_visualization(rgb, viz_points[new_frame_id])
             cv2.imwrite(
                 str(viz_dir / f"frame_{new_frame_id:06d}_viz.png"),
                 cv2.cvtColor(img_viz, cv2.COLOR_RGB2BGR),
             )
-
-
-def delete_unused_files(clip: DictConfig, cfg: DictConfig):
-    clip_dir = Path(cfg.preprocessed_root) / clip.name
-
-    # colmap txt version
-    if (clip_dir / "cameras.txt").exists():
-        (clip_dir / "cameras.txt").unlink()
-    if (clip_dir / "images.txt").exists():
-        (clip_dir / "images.txt").unlink()
-    if (clip_dir / "points3D.txt").exists():
-        (clip_dir / "points3D.txt").unlink()
-
-
-def da3(clip: DictConfig, cfg: DictConfig):
-    clip_dir = Path(cfg.preprocessed_root) / clip.name
-
-    images_dir = clip_dir / "images"
-
-    # load da3 model
-    model = DepthAnything3.from_pretrained("depth-anything/DA3NESTED-GIANT-LARGE")
-    # model = DepthAnything3.from_pretrained("depth-anything/DA3-LARGE-1.1")
-    model = model.to("cuda:0")
-
-    # construct image paths and determine processing resolution close to orig
-    image_filenames = sorted(
-        list(images_dir.glob("*.png")), key=extract_frame_number
-    )
-    image_filenames = [str(img_file) for img_file in image_filenames]
-    orig_w, orig_h = Image.open(image_filenames[0]).size
-    processing_res = max(orig_w, orig_h)
-
-    # da3 inference
-    prediction = model.inference(
-        image=image_filenames,
-        ref_view_strategy="middle",  # good for video according to docs
-        process_res=processing_res,
-        process_res_method="upper_bound_resize",
-    )
-
-    # Apply edge filtering to prediction at processed resolution (if configured)
-    edge_gradient_threshold = cfg.preprocessing.get("da3_edge_gradient_threshold", None)
-    if edge_gradient_threshold is not None:
-        logger.info(f"Applying depth edge filtering with threshold: {edge_gradient_threshold}")
-        prediction = filter_prediction_edge_artifacts(
-            prediction,
-            gradient_threshold=edge_gradient_threshold,
-        )
-
-    # dump to colmap with pc consisting of multi-frame depth projection (first, middle, last)
-    colmap_dir = clip_dir / "sparse" / "0"
-    colmap_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Remove stale PLY file so it gets regenerated from the new .bin
-    stale_ply = colmap_dir / "points3D.ply"
-    if stale_ply.exists():
-        stale_ply.unlink()
-        logger.info(f"Removed stale PLY file: {stale_ply}")
-    
-    # Use first, middle, and last frames for initialization
-    num_frames_total = len(prediction.depth)
-    init_frame_indices = [0, num_frames_total // 2, num_frames_total - 1]
-    logger.info(f"Initializing point cloud from frames: {init_frame_indices}")
-    
-    view_point_counts = da3_to_multi_view_colmap(
-        prediction,
-        colmap_dir,
-        image_filenames,
-        view_indices=init_frame_indices,
-        conf_thresh_percentile=cfg.preprocessing.da3_conf_thresh_percentile,
-        pixel_stride=cfg.preprocessing.da3_pc_pixel_stride,
-        densify_ratio=cfg.preprocessing.da3_densify_ratio,
-    )
-    logger.info(f"Point counts per view: {dict(zip(init_frame_indices, view_point_counts))}")
-
-    # Store depth maps at both processed and original resolution
-    # Processed resolution: used by point cloud and cotracker (guarantees consistency)
-    # Original resolution: available for other downstream uses like depth loss supervision for rendered depths in original resolution
-    depth_dir = clip_dir / cfg.preprocessing.depth_subdir
-    depth_dir.mkdir(parents=True, exist_ok=True)
-    depth_processed_dir = clip_dir / cfg.preprocessing.depth_processed_subdir
-    depth_processed_dir.mkdir(parents=True, exist_ok=True)
-    confidence_dir = clip_dir / cfg.preprocessing.confidence_subdir
-    confidence_dir.mkdir(parents=True, exist_ok=True)
-    
-    num_frames = len(prediction.depth)
-    for frame_idx in range(num_frames):
-        depth_proc = prediction.depth[frame_idx]
-        
-        # Save at processed resolution (for point cloud / cotracker consistency)
-        depth_processed_path = depth_processed_dir / f"{frame_idx:06d}.npy"
-        np.save(depth_processed_path, depth_proc)
-        
-        # Save at original resolution (for other uses)
-        depth_orig = cv2.resize(
-            depth_proc, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST
-        )
-        depth_path = depth_dir / f"{frame_idx:06d}.npy"
-        np.save(depth_path, depth_orig)
-        
-        # Save confidence at original resolution
-        confidence_proc = prediction.conf[frame_idx]
-        confidence_orig = cv2.resize(
-            confidence_proc, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST
-        )
-        confidence_path = confidence_dir / f"{frame_idx:06d}.npy"
-        np.save(confidence_path, confidence_orig)
-
-
-    # Clean up GPU memory from da3 model
-    del model
-    del prediction
-    torch.cuda.empty_cache()
-
-
-def process_clip(clip: DictConfig, cfg: DictConfig):
-    get_cholecseg8k_frames(clip, cfg)
-
-    if not cfg.preprocessing.only_update_annotations:
-        da3(clip, cfg)
-
-        if not cfg.preprocessing.verbose_output:
-            delete_unused_files(clip, cfg)
 
 
 @hydra.main(config_path="conf", config_name="config.yaml", version_base="1.3")
@@ -420,7 +293,7 @@ def main(cfg: DictConfig):
         OmegaConf.save(cfg, config_dump)
 
     for clip in tqdm(cfg.clips, desc="Processing clips", unit="clip"):
-        process_clip(clip, cfg)
+        preprocess(clip, cfg)
 
 
 if __name__ == "__main__":
