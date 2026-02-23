@@ -225,7 +225,7 @@ def preprocess(clip: DictConfig, cfg: DictConfig):
         out_overlayed = clip_dir / cfg.preprocess.overlay_subdir
         out_overlayed.mkdir(parents=True, exist_ok=True)
 
-    frame_files, semantic_mask_files, color_mask_files = get_clip_seg8k(
+    frame_files, semantic_mask_files, _ = get_clip_seg8k(
         seg8k_root=Path(cfg.cholecseg8k_root),
         seg8k_video_id=clip.video_id,
         first_frame=clip.first_frame,
@@ -233,10 +233,22 @@ def preprocess(clip: DictConfig, cfg: DictConfig):
         frame_stride=clip.frame_stride,
     )
 
-    # estimate crops to remove black borders
-    top, bottom, left, right = estimate_crop_box(
-        seg8k_endo_watershed_to_class_ids(Image.open(semantic_mask_files[0]))
-    )
+    # estimate crops to remove black borders from selected semantic mask source
+    if cfg.preprocess.semantic_mask_source == "gt":
+        first_class_ids = seg8k_endo_watershed_to_class_ids(Image.open(semantic_mask_files[0]))
+    elif cfg.preprocess.semantic_mask_source == "sasvi":
+        first_pred_mask_path = (
+            clip_dir
+            / cfg.preprocess.predicted_semantic_mask_subdir
+            / "frame_000000.npy"
+        )
+        first_class_ids = np.load(first_pred_mask_path)
+    else:
+        raise ValueError(
+            f"Unknown semantic_mask_source: {cfg.preprocess.semantic_mask_source}"
+        )
+
+    top, bottom, left, right = estimate_crop_box(first_class_ids)
 
     # translate spatial labels to new coordinates
     translated_labels, viz_points = _load_and_translate_spatial_labels(
@@ -256,23 +268,29 @@ def preprocess(clip: DictConfig, cfg: DictConfig):
             shutil.rmtree(viz_dir)
         viz_dir.mkdir(parents=True)
 
-    for new_frame_id, (frame_file, semantic_mask_file, color_mask_file) in enumerate(
-        zip(frame_files, semantic_mask_files, color_mask_files)
-    ):
+    for new_frame_id, frame_file in enumerate(frame_files):
         rgb = Image.open(frame_file)
-        semantic_mask = Image.open(semantic_mask_file)
-        color_mask = Image.open(color_mask_file)
-
-        class_ids = seg8k_endo_watershed_to_class_ids(semantic_mask)
+        if cfg.preprocess.semantic_mask_source == "gt":
+            semantic_mask = Image.open(semantic_mask_files[new_frame_id])
+            class_ids = seg8k_endo_watershed_to_class_ids(semantic_mask)
+        elif cfg.preprocess.semantic_mask_source == "sasvi":
+            pred_mask_path = (
+                clip_dir
+                / cfg.preprocess.predicted_semantic_mask_subdir
+                / f"frame_{new_frame_id:06d}.npy"
+            )
+            class_ids = np.load(pred_mask_path)
+        else:
+            raise ValueError(
+                f"Unknown semantic_mask_source: {cfg.preprocess.semantic_mask_source}"
+            )
 
         rgb = np.asarray(rgb)[top:bottom, left:right]
         class_ids = class_ids[top:bottom, left:right]
-        color_mask = np.asarray(color_mask)[top:bottom, left:right]
         rgb = center_crop_divisible(
             rgb, cfg.preprocess.frames_divisor, skip_last_dim=True
         )
         class_ids = center_crop_divisible(class_ids, cfg.preprocess.frames_divisor)
-        color_mask = center_crop_divisible(color_mask, cfg.preprocess.frames_divisor, skip_last_dim=True)
 
         if not only_update_annotations:
             # Generate instance masks from semantic masks using connected components

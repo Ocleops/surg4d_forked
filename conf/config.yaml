@@ -1,5 +1,6 @@
 defaults:
   - clips: final_dataset
+  - segment: sasvi_mask2former
   - preprocess: qwen3
   - extract_geometry: qwen3
   - track_objects: qwen3

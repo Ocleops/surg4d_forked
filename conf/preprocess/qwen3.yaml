@@ -1,3 +1,6 @@
+semantic_mask_source: gt
+predicted_semantic_mask_subdir: ${segment.prediction_subdir}
+
 semantic_mask_subdir: semantic_masks
 instance_mask_subdir: instance_masks
 overlay_subdir: overlayed_images

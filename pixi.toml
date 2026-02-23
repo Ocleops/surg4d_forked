@@ -21,6 +21,7 @@ cuda-version = "==12.8"
 cuda-driver-dev = "12.8.*"
 libxcrypt = "*"
 uv = ">=0.1.0"
+libjpeg-turbo = ">=3.1.2,<4"
 
 [tasks]
 # Initialize git submodules
@@ -30,7 +31,7 @@ init-submodules = "git submodule update --init --recursive"
 install-pytorch = "uv pip install torch==2.9.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128"
 
 # vLLM installation from official PyPI
-install-vllm-deps = "uv pip install six && uv pip install 'setuptools<80'"
+install-vllm-deps = "uv pip install six==1.17.0 && uv pip install 'setuptools==79.0.1'"
 
 install-vllm = "uv pip install vllm==0.15.1"
 
@@ -46,19 +47,37 @@ wget -O checkpoints/cotracker3_scaled_offline.pth https://huggingface.co/faceboo
 curl -L -o checkpoints/cotracker3_scaled_offline.pth https://huggingface.co/facebook/cotracker3/resolve/main/scaled_offline.pth
 """
 
+install-sam2 = """
+cd submodules/SASVi/src/sam2 && uv pip install -e . && cd ../../../..
+"""
+
+download-sam2-checkpoint = """
+mkdir -p submodules/SASVi/src/sam2/checkpoints && \
+cd submodules/SASVi/src/sam2/checkpoints && \
+wget -O sam2.1_hiera_large.pt https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt || \
+curl -L -o sam2.1_hiera_large.pt https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt && \
+cd ../../../../..
+"""
+
+install-sds-playground = """
+cd submodules/SDS_Playground && uv pip install -e . && cd ../..
+"""
+
 install-python-deps = """
 uv pip install \
-  hydra-core \
+  hydra-core==1.3.2 \
   qwen-vl-utils==0.0.14 \
-  rerun-sdk \
-  accelerate \
+  rerun-sdk==0.23.1 \
+  accelerate==1.12.0 \
   transformers==4.57.1 \
-  notebook==7.5.3
+  notebook==7.5.3 \
+  albumentations==1.3.1 \
+  jpeg4py==0.1.4
 """
 
 
 # Full setup - follows dependency order
-setup = { depends-on = ["init-submodules", "install-pytorch", "install-vllm-deps", "install-vllm", "install-cotracker", "install-depth-anything-3", "download-cotracker-checkpoint", "install-python-deps"] }
+setup = { depends-on = ["init-submodules", "install-pytorch", "install-vllm-deps", "install-vllm", "install-cotracker", "install-depth-anything-3", "download-cotracker-checkpoint", "install-sam2", "download-sam2-checkpoint", "install-sds-playground", "install-python-deps"] }
 
 # Test installation
 test-install = """
