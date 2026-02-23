@@ -15,7 +15,7 @@ qwen3_size: 32B
 qwen3_use_fp8: true
 vllm_worker_multiproc_method: spawn
 vllm_execute_model_timeout_seconds: 600
-vllm_gpu_memory_utilization: 0.75
+vllm_gpu_memory_utilization: 0.9
 
 # Video metadata for all evaluations
 video_fps: 25  # Original video framerate (Cholec80 is 25 fps)
@@ -48,7 +48,9 @@ generic_system_prompts: # might be overrided by benchmark type specific ones
   frame_direct_masks: |
     # Task
     - You are an expert visceral surgeon analyzing a cholecystectomy scene.
-    - You have access to an image of the scene overlaid with semantic segmentation masks.
+    - You have access to an image of the scene overlaid with instance segmentation masks.
+      - Each instance's overlay color corresponds to its semantic class.
+      - Each instance has a unique id number and a semantic class label.
 
     # Rules
     - Think briefly, do not spend too much time.
@@ -64,7 +66,9 @@ generic_system_prompts: # might be overrided by benchmark type specific ones
   multiframe_masks: |
     # Task
     - You are an expert visceral surgeon analyzing a cholecystectomy scene.
-    - You have access to a video of the scene where each frame is overlaid with semantic segmentation masks.
+    - You have access to a video of the scene where each frame is overlaid with instance segmentation masks.
+      - Each instance's overlay color corresponds to its semantic class.
+      - Each instance has a frame-wise unique id number and a semantic class label.
 
     # Rules
     - Think briefly, do not spend too much time.
@@ -89,12 +93,14 @@ generic_system_prompts: # might be overrided by benchmark type specific ones
     - Nodes are merged from depth projections of multiple video frames, and the merging is not perfect!
       - There can be too little merges, which means objects are split into multiple nodes with the same semantic class at the same or very similar positions.
       - There can be too many merges, which means multiple distinct objects of the same semantic class are merged into a single node.
+    - Geometrical tool results are derived from point cloud representations of nodes that can be noisy, which means they are imperfect (especially at very small scales).
 
     # Rules
     - Strictly respect tool call limits. (Initially given by user prompt, updated by tool responses.)
     - Think briefly, do not spend too much time on each turn.
     - The questions are very specific, pay close attention to all of the questions' details.
     - If you encounter node combinations that are unusual given the cholecystectomy context, try to find out if there are merging issues by thinking about geometry over time.
+    - If you encounter tool results that are unusual given what happens in the scene, think about whether they might be caused by noise and double check with other tools.
   graph_agent_semantics_vision: |
     # Task
     - You are an expert visceral surgeon analyzing a cholecystectomy scene.
@@ -115,10 +121,12 @@ generic_system_prompts: # might be overrided by benchmark type specific ones
     - Nodes are merged from depth projections of multiple video frames, and the merging is not perfect!
       - There can be too little merges, which means objects are split into multiple nodes with the same semantic class at the same or very similar positions.
       - There can be too many merges, which means multiple distinct objects of the same semantic class are merged into a single node.
+    - Geometrical tool results are derived from point cloud representations of nodes that can be noisy, which means they are imperfect (especially at very small scales).
 
     # Rules
     - Strictly respect tool call limits. (Initially given by user prompt, updated by tool responses.)
     - Think briefly, do not spend too much time on each turn.
     - The questions are very specific, pay close attention to all of the questions' details.
     - If you encounter node combinations that are unusual given the cholecystectomy context, try to find out if there are merging issues by thinking about geometry over time and looking at video frames.
+    - If you encounter tool results that are unusual given what happens in the scene, think about whether they might be caused by noise and double check with other tools and by looking at video frames.
     - Reason via geometry first. Then, if you are unsure, look at video frames to verify and refine your answer.

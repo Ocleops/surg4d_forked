@@ -14,12 +14,9 @@ multiframe_prompt_template: |
   Definition of direction classes:
   - You should indicate one direction for each axis (x, y, z).
   - The direction can either be -1, 0, or 1:
-    - x: -1 if significant movement to the left, 0 if no significant movement, 1 if significant movement to the right
-    - y: -1 if significant movement upward, 0 if no significant movement, 1 if significant movement downward
-    - z: -1 if significant movement toward the camera, 0 if no significant movement, 1 if significant movement away from the camera
-  - Significant movement means the axis is relevant compared to the other axes. Examples:
-    - If an object moves 3cm to the left, 5cm towards the camera and 0.5cm downward, the direction class would be {{"x": -1, "y": 0, "z": -1}} because 0.5cm is very small compared to 5cm and 3cm.
-    - If an object moves 0.3cm to the left, 0.5cm towards the camera, and 0.4cm downward, the direction class would be {{"x": -1, "y": 1, "z": -1}} because movement in all axes has roughly the same magnitude.
+    - x: -1 if movement to the left, 0 if no movement, 1 if movement to the right
+    - y: -1 if movement upward, 0 if no movement, 1 if movement downward
+    - z: -1 if movement toward the camera, 0 if no movement, 1 if movement away from the camera
 
   Your final answer has to contain exactly one direction class vector as a JSON object. Do not refuse!
   Example output (format only): ... {{"x": X, "y": Y, "z": Z}} ...
@@ -32,12 +29,9 @@ multiframe_masks_prompt_template: |
   Definition of direction classes:
   - You should indicate one direction for each axis (x, y, z).
   - The direction can either be -1, 0, or 1:
-    - x: -1 if significant movement to the left, 0 if no significant movement, 1 if significant movement to the right
-    - y: -1 if significant movement upward, 0 if no significant movement, 1 if significant movement downward
-    - z: -1 if significant movement toward the camera, 0 if no significant movement, 1 if significant movement away from the camera
-  - Significant movement means the axis is relevant compared to the other axes. Examples:
-    - If an object moves 3cm to the left, 5cm towards the camera and 0.5cm downward, the direction class would be {{"x": -1, "y": 0, "z": -1}} because 0.5cm is very small compared to 5cm and 3cm.
-    - If an object moves 0.3cm to the left, 0.5cm towards the camera, and 0.4cm downward, the direction class would be {{"x": -1, "y": 1, "z": -1}} because movement in all axes has roughly the same magnitude.
+    - x: -1 if movement to the left, 0 if no movement, 1 if movement to the right
+    - y: -1 if movement upward, 0 if no movement, 1 if movement downward
+    - z: -1 if movement toward the camera, 0 if no movement, 1 if movement away from the camera
 
   Your final answer has to contain exactly one direction class vector as a JSON object. Do not refuse!
   Example output (format only): ... {{"x": X, "y": Y, "z": Z}} ...
@@ -68,12 +62,9 @@ graph_agent_semantics_vision_prompt_template: |
   Definition of direction classes:
   - You should indicate one direction for each axis (x, y, z).
   - The direction can either be -1, 0, or 1:
-    - x: -1 if significant movement to the left, 0 if no significant movement, 1 if significant movement to the right
-    - y: -1 if significant movement upward, 0 if no significant movement, 1 if significant movement downward
-    - z: -1 if significant movement toward the camera, 0 if no significant movement, 1 if significant movement away from the camera
-  - Significant movement means the axis is relevant compared to the other axes. Examples:
-    - If an object moves 3cm to the left, 5cm towards the camera and 0.5cm downward, the direction class would be {{"x": -1, "y": 0, "z": -1}} because 0.5cm is very small compared to 5cm and 3cm.
-    - If an object moves 0.3cm to the left, 0.5cm towards the camera, and 0.4cm downward, the direction class would be {{"x": -1, "y": 1, "z": -1}} because movement in all axes has roughly the same magnitude.
+    - x: -1 if movement to the left, 0 if no movement, 1 if movement to the right
+    - y: -1 if movement upward, 0 if no movement, 1 if movement downward
+    - z: -1 if movement toward the camera, 0 if no movement, 1 if movement away from the camera
 
   Your final answer has to contain exactly one direction class vector as a JSON object. Do not refuse!
   Example output (format only): ... {{"x": X, "y": Y, "z": Z}} ...
@@ -102,12 +93,9 @@ graph_agent_semantics_prompt_template: |
   Definition of direction classes:
   - You should indicate one direction for each axis (x, y, z).
   - The direction can either be -1, 0, or 1:
-    - x: -1 if significant movement to the left, 0 if no significant movement, 1 if significant movement to the right
-    - y: -1 if significant movement upward, 0 if no significant movement, 1 if significant movement downward
-    - z: -1 if significant movement toward the camera, 0 if no significant movement, 1 if significant movement away from the camera
-  - Significant movement means the axis is relevant compared to the other axes. Examples:
-    - If an object moves 3cm to the left, 5cm towards the camera and 0.5cm downward, the direction class would be {{"x": -1, "y": 0, "z": -1}} because 0.5cm is very small compared to 5cm and 3cm.
-    - If an object moves 0.3cm to the left, 0.5cm towards the camera, and 0.4cm downward, the direction class would be {{"x": -1, "y": 1, "z": -1}} because movement in all axes has roughly the same magnitude.
+    - x: -1 if movement to the left, 0 if no movement, 1 if movement to the right
+    - y: -1 if movement upward, 0 if no movement, 1 if movement downward
+    - z: -1 if movement toward the camera, 0 if no movement, 1 if movement away from the camera
 
   Your final answer has to contain exactly one direction class vector as a JSON object. Do not refuse!
   Example output (format only): ... {{"x": X, "y": Y, "z": Z}} ...
