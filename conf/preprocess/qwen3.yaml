@@ -1,16 +1,19 @@
 semantic_mask_subdir: semantic_masks
 instance_mask_subdir: instance_masks
-overlay_subdir: color_masks
+overlay_subdir: overlayed_images
 image_subdir: images
+spatial_labels_output_filename: spatial_annotations.json
 
 annotation_root: data/annotations
 annotation_stride: 4
-spatial_labels_output_filename: spatial_annotations.json
+
 dump_label_visualizations: true
 label_viz_subdir: label_viz
 
 frames_divisor: ${extract_geometry.da3_vit_patch_size}
 
 min_component_area: 5
+
+overlay_label_mode: "index_and_class"  # class or index_and_class
 
 only_update_annotations: false

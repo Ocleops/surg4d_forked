@@ -348,10 +348,12 @@ def evaluate_directional(
 
 @hydra.main(config_path="conf", config_name="config.yaml", version_base="1.3")
 def main(cfg: DictConfig):
-    # Deterministic Torch/CUDA setup
-    torch.manual_seed(42)
-    np.random.seed(42)
-    random.seed(42)
+    # seed everything (except cuda since vllm init might crash)
+    # this is likely unnecessary since we seed individual llm generate calls
+    # anyway and nothing else should be stochastic, but keep to be save
+    torch.manual_seed(cfg.seed)
+    np.random.seed(cfg.seed)
+    random.seed(cfg.seed)
 
     model, processor = get_qwen3(
         size=cfg.eval.qwen3_size,

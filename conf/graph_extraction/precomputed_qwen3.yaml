@@ -12,5 +12,3 @@ temporal_lof_outlier_filter:
 timestep_stride: 4
 
 graph_edge_threshold: 0.05 # edge if bhattacharyya coefficient >= threshold
-
-random_seed: 1234

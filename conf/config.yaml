@@ -13,6 +13,8 @@ cholecseg8k_root: data/cholecseg8k
 preprocessed_root: data/preprocessed/clean
 output_root: output/clean
 
+seed: 1234
+
 config_dumps:
   # - ${output_root}/config.yaml
 

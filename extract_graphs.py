@@ -264,12 +264,12 @@ def extract_graph(clip: DictConfig, cfg: DictConfig):
         clip (DictConfig): Clip configuration
         cfg (DictConfig): Full hydra configuration
     """
-    # make deterministic
-    random.seed(cfg.graph_extraction.random_seed)
-    np.random.seed(cfg.graph_extraction.random_seed)
-    torch.manual_seed(cfg.graph_extraction.random_seed)
+    # seed everything
+    random.seed(cfg.seed)
+    np.random.seed(cfg.seed)
+    torch.manual_seed(cfg.seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(cfg.graph_extraction.random_seed)
+        torch.cuda.manual_seed_all(cfg.seed)
 
     # load points
     points_file = Path(cfg.preprocessed_root) / clip.name / cfg.graph_extraction.cotracker_subdir / "point_positions_precomputed.npy"

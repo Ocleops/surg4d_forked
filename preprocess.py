@@ -8,8 +8,10 @@ import shutil
 import cv2
 import json
 import re
+import matplotlib as mpl
 
 from utils.cholec_utils import get_clip_seg8k, seg8k_endo_watershed_to_class_ids
+from utils.som_utils import draw_masks
 
 
 def extract_frame_number(filepath: Path) -> int:
@@ -182,7 +184,30 @@ def _render_label_visualization(
     return img_viz
 
 
+def _get_fixed_tab20_instance_colors(
+    instance_map: np.ndarray,
+    semantic_map: np.ndarray,
+) -> np.ndarray:
+    """Map each instance to a deterministic tab20 color via its dominant semantic class id."""
+    tab20 = np.asarray(mpl.colormaps["tab20"].colors, dtype=np.float32)
+    instance_ids = np.unique(instance_map)
+    instance_ids = instance_ids[instance_ids != 0]
+
+    colors = []
+    for instance_id in instance_ids:
+        semantic_values = semantic_map[instance_map == instance_id]
+        semantic_values = semantic_values[semantic_values != 0]
+        dominant_semantic_id = int(np.bincount(semantic_values).argmax())
+        colors.append(tab20[dominant_semantic_id % tab20.shape[0]])
+
+    if colors:
+        return np.stack(colors, axis=0)
+    return np.zeros((0, 3), dtype=np.float32)
+
+
 def preprocess(clip: DictConfig, cfg: DictConfig):
+    # this does not need to be seeded, all operations should be deterministic anyway
+
     clip_dir = Path(cfg.preprocessed_root) / clip.name
 
     only_update_annotations = cfg.preprocess.only_update_annotations
@@ -272,12 +297,30 @@ def preprocess(clip: DictConfig, cfg: DictConfig):
                     instance_ids[component_mask] = instance_counter
                     instance_counter += 1
 
+            # save np masks
             np.save(out_sem_masks / f"frame_{new_frame_id:06d}.npy", class_ids)
             np.save(out_inst_masks / f"frame_{new_frame_id:06d}.npy", instance_ids)
+
+            # save image
             rgb_img = Image.fromarray(rgb)
             rgb_img.save(out_images / f"frame_{new_frame_id:06d}.png")
-            overlayed_img = Image.blend(rgb_img, Image.fromarray(color_mask), alpha=0.5)
-            overlayed_img.save(out_overlayed / f"frame_{new_frame_id:06d}.png")
+
+            # save overlayed viz
+            instance_colors = _get_fixed_tab20_instance_colors(instance_ids, class_ids)
+            out_inst = draw_masks(
+                rgb,
+                instance_ids,
+                sem_masks=class_ids,
+                alpha=0.4,
+                threshold=0.5,
+                colors=instance_colors,
+                label_mode=cfg.preprocess.overlay_label_mode,
+                fontsize=0.5,
+            )
+            cv2.imwrite(
+                str(out_overlayed / f"frame_{new_frame_id:06d}.png"),
+                cv2.cvtColor(out_inst, cv2.COLOR_RGB2BGR),
+            )
 
 
         # Optional visualization of labels on preprocessed frames

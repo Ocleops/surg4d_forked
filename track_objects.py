@@ -12,6 +12,7 @@ from omegaconf import DictConfig
 from tqdm import tqdm
 import hydra
 from loguru import logger
+import random
 
 
 # Import CoTracker3 utilities
@@ -466,6 +467,13 @@ def compute_semantic_labels_for_merged_instances(
 
 
 def track_objects(clip: DictConfig, cfg: DictConfig):
+    # seed everything
+    random.seed(cfg.seed)
+    np.random.seed(cfg.seed)
+    torch.manual_seed(cfg.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(cfg.seed)
+
     """Process a single clip to extract CoTracker3 control points."""
     clip_dir = Path(cfg.preprocessed_root) / clip.name
     images_dir = clip_dir / "images"

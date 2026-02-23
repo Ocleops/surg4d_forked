@@ -1,6 +1,8 @@
 from pathlib import Path
 from PIL import Image
 import numpy as np
+import random
+import torch
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 import hydra
@@ -20,6 +22,14 @@ def extract_frame_number(filepath: Path) -> int:
 
 
 def extract_geometry(clip: DictConfig, cfg: DictConfig, model: DepthAnything3):
+    # seed everything
+    random.seed(cfg.seed)
+    np.random.seed(cfg.seed)
+    torch.manual_seed(cfg.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(cfg.seed)
+    
+
     clip_dir = Path(cfg.preprocessed_root) / clip.name
     images_dir = clip_dir / cfg.extract_geometry.image_subdir
 
