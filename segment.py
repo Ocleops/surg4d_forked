@@ -107,6 +107,10 @@ def _latest_experiment_dir(log_dir: Path) -> Path:
     return candidates[-1]
 
 
+def _sasvi_compatible_frame_stem(frame_idx: int) -> str:
+    return f"00000{frame_idx}"
+
+
 def _resolve_checkpoint(cfg: DictConfig) -> Path:
     if cfg.segment.run_training:
         checkpoint_path = _latest_experiment_dir(Path(cfg.segment.log_dir)) / cfg.segment.checkpoint_filename
@@ -199,7 +203,11 @@ def _prepare_sasvi_base_video_dir(cfg: DictConfig):
         clip_video_dir.mkdir(parents=True, exist_ok=False)
         for frame_idx, frame_file in enumerate(frame_files):
             rgb = Image.open(frame_file).convert("RGB")
-            rgb.save(clip_video_dir / f"{frame_idx:06d}.jpg", format="JPEG", quality=95)
+            rgb.save(
+                clip_video_dir / f"{_sasvi_compatible_frame_stem(frame_idx)}.jpg",
+                format="JPEG",
+                quality=95,
+            )
 
 
 def _run_sasvi_inference(cfg: DictConfig, checkpoint_path: Path):
@@ -271,7 +279,10 @@ def _convert_sasvi_outputs_to_numpy_masks(cfg: DictConfig):
         preprocessed_sem_dir.mkdir(parents=True, exist_ok=False)
 
         for frame_idx in range(len(frame_files)):
-            sasvi_mask_path = sasvi_clip_dir / f"{frame_idx:06d}_rgb_mask.png"
+            sasvi_mask_path = (
+                sasvi_clip_dir
+                / f"{_sasvi_compatible_frame_stem(frame_idx)}_rgb_mask.png"
+            )
             semantic_mask = np.asarray(Image.open(sasvi_mask_path), dtype=np.uint8)
             if semantic_mask.ndim == 3:
                 semantic_mask = semantic_mask[:, :, 0]
