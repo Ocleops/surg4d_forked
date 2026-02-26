@@ -24,7 +24,7 @@ spec_node_distances_through_time = {
     "type": "function",
     "function": {
         "name": "node_distances_through_time",
-        "description": f"Returns the distances between two nodes for all timesteps. The distances are computed as percentile(distances_ascending(points_node_1, points_node_2), {BOUNDARY_PERCENTILE}), which means they are approximative. Relative distances can be compared across timesteps, but absolute distance values should be interpreted with caution.",
+        "description": "Returns the distances between two nodes for all timesteps. The distances are computed as min distance(p_i, q_j), where p_i is a point in the first node and q_j is a point in the second node.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -195,7 +195,7 @@ def node_distances_through_time(
             {
                 "node_id_1": int(node_id_1),
                 "node_id_2": int(node_id_2),
-                "approximate_distances": distances,
+                "distances": distances,
             }
         ),
     }
@@ -205,7 +205,7 @@ spec_node_overlap_scores_through_time = {
     "type": "function",
     "function": {
         "name": "node_overlap_scores_through_time",
-        "description": "Returns the spatial overlap scores (Bhattacharyya coefficients) between two graph nodes at all timesteps. Higher values (closer to 1) indicate greater spatial overlap between the nodes' gaussian distributions; lower values (closer to 0) indicate the nodes are spatially separated. Note that Bhattacharyya coefficients are computed for a single Gaussian approximation of each node, so the scores are only a rough estimate of true spatial overlap. Relative overlap scores can be compared across timesteps, but absolute values should be interpreted with caution.",
+        "description": "Returns the spatial overlap scores (Bhattacharyya coefficients) between two graph nodes at all timesteps. Higher values (closer to 1) indicate greater spatial overlap between the nodes' gaussian distributions; lower values (closer to 0) indicate the nodes are spatially separated. Note that Bhattacharyya coefficients are computed for a single Gaussian approximation of each node, so the scores are only a rough estimate of true spatial overlap.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -327,7 +327,7 @@ def node_overlap_scores_through_time(
             {
                 "node_id_1": int(node_id_1),
                 "node_id_2": int(node_id_2),
-                "approximate_overlap_scores": overlap_scores,
+                "overlap_scores": overlap_scores,
             }
         ),
     }
@@ -700,6 +700,121 @@ spec_relative_node_movement_through_time = {
     },
 }
 
+
+spec_aggregated_node_movement = {
+    "type": "function",
+    "function": {
+        "name": "aggregated_node_movement",
+        "description": "Returns centroid movement between two timesteps for a single node.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "node_id": {
+                    "type": "integer",
+                    "description": "The node's id",
+                },
+                "start_timestep": {
+                    "type": "integer",
+                    "description": "The start timestep index",
+                },
+                "end_timestep": {
+                    "type": "integer",
+                    "description": "The end timestep index",
+                },
+            },
+            "required": ["node_id", "start_timestep", "end_timestep"],
+        },
+    },
+}
+
+
+def aggregated_node_movement(
+    centroids: np.ndarray,
+    node_id: int,
+    start_timestep: int,
+    end_timestep: int,
+    toolkit: Optional['GraphTools'] = None,
+) -> Dict[str, Any]:
+    """Compute centroid_tend - centroid_tstart for a single node.
+
+    Args:
+        centroids: Cluster centroids through time (T, n_clusters, 3)
+        node_id: Node/cluster id
+        start_timestep: Start timestep index
+        end_timestep: End timestep index
+        toolkit: Optional GraphTools instance for rerun logging
+    """
+    n_timesteps = centroids.shape[0]
+    n_nodes = centroids.shape[1]
+
+    if not (0 <= node_id < n_nodes):
+        return {
+            "text": json.dumps(
+                {"error": f"node_id={node_id} out of range [0, {n_nodes})"}
+            )
+        }
+
+    if not (0 <= start_timestep < n_timesteps):
+        return {
+            "text": json.dumps(
+                {
+                    "error": f"start_timestep={start_timestep} out of range [0, {n_timesteps})"
+                }
+            )
+        }
+    if not (0 <= end_timestep < n_timesteps):
+        return {
+            "text": json.dumps(
+                {"error": f"end_timestep={end_timestep} out of range [0, {n_timesteps})"}
+            )
+        }
+
+    centroid_start = centroids[start_timestep, node_id]
+    centroid_end = centroids[end_timestep, node_id]
+    delta = centroid_end - centroid_start
+
+    if toolkit is not None and toolkit.recording_active:
+        counter = toolkit.increase_logging_tool_counter()
+        prefix = f"tool_calls/{counter:02d}_aggregated_node_movement"
+
+        rr.set_time("timestep", sequence=start_timestep)
+        rr.log(
+            f"{prefix}/start_centroid",
+            rr.Points3D(
+                positions=[toolkit.point_n2o(centroid_start)],
+                colors=[[0, 255, 0]],
+                labels=["start"],
+                show_labels=True,
+            ),
+        )
+
+        rr.set_time("timestep", sequence=end_timestep)
+        rr.log(
+            f"{prefix}/end_centroid",
+            rr.Points3D(
+                positions=[toolkit.point_n2o(centroid_end)],
+                colors=[[255, 0, 0]],
+                labels=["end"],
+                show_labels=True,
+            ),
+        )
+
+    return {
+        "text": json.dumps(
+            {
+                "node_id": int(node_id),
+                "start_timestep": int(start_timestep),
+                "end_timestep": int(end_timestep),
+                "movement": {
+                    "x": round(float(delta[0]), 4),
+                    "y": round(float(delta[1]), 4),
+                    "z": round(float(delta[2]), 4),
+                },
+            }
+        )
+    }
+
+
 def relative_node_movement_through_time(
     centroids: np.ndarray,
     node_id_1: int,
@@ -804,121 +919,6 @@ def relative_node_movement_through_time(
             }
         ),
     }
-
-
-spec_aggregated_node_movement = {
-    "type": "function",
-    "function": {
-        "name": "aggregated_node_movement",
-        "description": "Returns centroid movement between two timesteps for a single node.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "node_id": {
-                    "type": "integer",
-                    "description": "The node's id",
-                },
-                "start_timestep": {
-                    "type": "integer",
-                    "description": "The start timestep index",
-                },
-                "end_timestep": {
-                    "type": "integer",
-                    "description": "The end timestep index",
-                },
-            },
-            "required": ["node_id", "start_timestep", "end_timestep"],
-        },
-    },
-}
-
-def aggregated_node_movement(
-    centroids: np.ndarray,
-    node_id: int,
-    start_timestep: int,
-    end_timestep: int,
-    toolkit: Optional['GraphTools'] = None,
-) -> Dict[str, Any]:
-    """Compute centroid_tend - centroid_tstart for a single node.
-
-    Args:
-        centroids: Cluster centroids through time (T, n_clusters, 3)
-        node_id: Node/cluster id
-        start_timestep: Start timestep index
-        end_timestep: End timestep index
-        toolkit: Optional GraphTools instance for rerun logging
-    """
-    n_timesteps = centroids.shape[0]
-    n_nodes = centroids.shape[1]
-
-    if not (0 <= node_id < n_nodes):
-        return {
-            "text": json.dumps(
-                {"error": f"node_id={node_id} out of range [0, {n_nodes})"}
-            )
-        }
-
-    if not (0 <= start_timestep < n_timesteps):
-        return {
-            "text": json.dumps(
-                {
-                    "error": f"start_timestep={start_timestep} out of range [0, {n_timesteps})"
-                }
-            )
-        }
-    if not (0 <= end_timestep < n_timesteps):
-        return {
-            "text": json.dumps(
-                {"error": f"end_timestep={end_timestep} out of range [0, {n_timesteps})"}
-            )
-        }
-
-    centroid_start = centroids[start_timestep, node_id]
-    centroid_end = centroids[end_timestep, node_id]
-    delta = centroid_end - centroid_start
-
-    if toolkit is not None and toolkit.recording_active:
-        counter = toolkit.increase_logging_tool_counter()
-        prefix = f"tool_calls/{counter:02d}_aggregated_node_movement"
-
-        rr.set_time("timestep", sequence=start_timestep)
-        rr.log(
-            f"{prefix}/start_centroid",
-            rr.Points3D(
-                positions=[toolkit.point_n2o(centroid_start)],
-                colors=[[0, 255, 0]],
-                labels=["start"],
-                show_labels=True,
-            ),
-        )
-
-        rr.set_time("timestep", sequence=end_timestep)
-        rr.log(
-            f"{prefix}/end_centroid",
-            rr.Points3D(
-                positions=[toolkit.point_n2o(centroid_end)],
-                colors=[[255, 0, 0]],
-                labels=["end"],
-                show_labels=True,
-            ),
-        )
-
-    return {
-        "text": json.dumps(
-            {
-                "node_id": int(node_id),
-                "start_timestep": int(start_timestep),
-                "end_timestep": int(end_timestep),
-                "movement": {
-                    "x": round(float(delta[0]), 4),
-                    "y": round(float(delta[1]), 4),
-                    "z": round(float(delta[2]), 4),
-                },
-            }
-        )
-    }
-
-
 
 
 class GraphTools:
