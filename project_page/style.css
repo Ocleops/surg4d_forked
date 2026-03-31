@@ -1,0 +1,669 @@
+@font-face {
+    font-family: 'Lato';
+    src: url('/assets/fonts/Lato-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+  }
+  
+@font-face {
+    font-family: 'Lato';
+    src: url('/assets/fonts/Lato-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-style: normal;
+}
+
+/* body {
+    font-family: 'Lato', sans-serif;
+} */
+
+#changing-icon {
+    transition: opacity 0.1s ease;
+}
+  
+#changing-icon.fade {
+    opacity: 0;
+}
+
+.myfont {
+    font-family: 'Google Sans', sans-serif;
+    color: #ffffff;
+}
+
+/* Bulma: global `strong { color: #363636 }` is for light prose. Our `.section.myfont` blocks use light text on dark bg — without this, <strong> stays gray and looks faint/wrong. */
+.section.myfont strong {
+    color: inherit;
+    font-weight: 700;
+}
+
+.animated-gradient-text {
+    background: linear-gradient(270deg, #ff6ec4, #7873f5, #6ee7b7, #facc15);
+    background-size: 800% 800%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    display: inline-block;
+    padding-bottom: 0.1em;
+    animation: gradientMove 6s ease infinite;
+}
+
+@keyframes gradientMove {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+.slider-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    flex-direction: column;
+    gap: 2vw;
+    width: 100%;
+    text-align: center;
+}
+
+.slider {
+    width: 0.7vw;
+    height: 4vh;
+    background: linear-gradient(0deg, #ffd7399a, #4000ff9d);
+    border-radius: 0.35vw;
+    position: relative;
+    cursor: pointer;
+}
+
+footer {
+    all: unset;
+    display: contents; /* behaves like the element doesn't exist layout-wise */
+  }
+
+.slider-one {
+    background: linear-gradient(0deg, #01c9b500, #16de91df);
+}
+
+.slider-two {
+    background: linear-gradient(0deg, #00759600, #14a8e8df);
+}
+
+.slider-three {
+    background: linear-gradient(0deg, #0168c900, #1169dcdf);
+}
+
+.slider .thumb {
+    width: 1.4vw;
+    height: 1.4vw;
+    background: rgb(60, 218, 189);
+    border-radius: 50%;
+    border: 0vh solid #3aa38e;
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    cursor: pointer;
+
+    box-shadow: 0 0 0.8vw 0.5vw rgb(32, 114, 99);
+
+    /* rgba(59, 111, 111, 0.64) */
+}
+
+.grid-container {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    /* Creates two columns */
+    grid-template-rows: 1fr 1fr;
+    width: 80%;
+    height: 100%;
+    flex: auto;
+    gap: 1vh;
+}
+
+.row {
+    display: flex;
+    width: 100%;
+    height: 100%;
+}
+
+.model-viewer-wrapper {
+    width: 80%;
+    /* You can adjust this value */
+    height: 25vh;
+    /* You can adjust this value */
+    max-width: 100%;
+    max-height: 80%;
+    justify-content: center;
+    /* Center the model viewer */
+    align-items: center;
+    /* Center the model viewer content */
+    display: flex;
+    background-color: #00000069;
+    /* Optional background for the wrapper */
+    border-radius: 20px;
+    /* Optional rounded corners */
+    margin-top: 20px;
+    /* Space between text and model viewer */
+}
+
+.selection-card {
+    background: #202020;
+    border-radius: 1.5vh;
+    text-align: center;
+    cursor: pointer;
+    padding: 1.3vh;
+    width: 80%;
+    /* height: 40%; */
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.selected {
+    color: rgb(60, 218, 189); /* Darker text */
+}
+
+.selection-wrapper {
+    width: 80%;
+    /* You can adjust this value */
+    height: 80%;
+    /* You can adjust this value */
+    max-width: 100%;
+    max-height: 80%;
+    display: flex;
+    background-color: #00000087;
+    /* Optional background for the wrapper */
+    border-radius: 20px;
+    /* Optional rounded corners */
+    margin-top: 20px;
+    /* Space between text and model viewer */
+    overflow-y: auto;
+    gap: 1vh;
+    flex-direction: column;
+    font-weight: 600;
+}
+
+.slider-wrapper {
+    width: 80%;
+    /* You can adjust this value */
+    height: 80%;
+    /* You can adjust this value */
+    max-width: 100%;
+    max-height: 80%;
+    display: flex;
+    background-color: #00000087;
+    /* Optional background for the wrapper */
+    border-radius: 20px;
+    /* Optional rounded corners */
+    margin-top: 20px;
+    /* Space between text and model viewer */
+    font-weight: 600;
+}
+
+.selection-card:first-of-type {
+    margin-top: 2vh;
+    /* or any spacing you like */
+}
+
+.selection-card:last-of-type {
+    margin-bottom: 2vh;
+    /* or any spacing you like */
+}
+
+.modelviewer-container {
+    display: flex;
+    flex-direction: column;
+    /* Stack children vertically */
+    justify-content: center;
+    /* Center horizontally */
+    align-items: center;
+    /* Center horizontally */
+    width: 100%;
+    text-align: center;
+    height: 30vh;
+    max-height: 100%;
+}
+
+.selection-container {
+    display: flex;
+    flex-direction: column;
+    /* Stack children vertically */
+    justify-content: center;
+    /* Center horizontally */
+    align-items: center;
+    /* Center horizontally */
+    width: 100%;
+    height: 30vh;
+    max-height: 100%;
+    text-align: center;
+}
+
+.hero-cover-desktop {
+    background-color: #000000;
+    background-image: none !important;
+    background-size: cover;
+    color: #fff;
+}
+
+.hero-cover-touch {
+    background-color: #000000;
+    background-image: none !important;
+    background-size: cover;
+    color: #fff;
+}
+
+/* Mobile top bar: layout fallback (colors enforced in index.html <style> + inline). */
+#mobile-top-bar.mobile-top-links {
+    transition: opacity 0.3s ease;
+}
+
+/* Unified cover: desktop = title+credits straddling center over video; mobile = title / video / credits (real flex rows, no display:contents). */
+#cover.cover-unified {
+    position: relative;
+    min-height: 100vh;
+    overflow: hidden;
+}
+
+.cover-unified__flow {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+}
+
+.cover-unified__video-wrap {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    background: #000;
+    z-index: 0;
+}
+
+.cover-unified__video-wrap .overlay {
+    z-index: 1;
+    pointer-events: none;
+}
+
+/* Desktop: cinematic 16:9 crop */
+#cover.cover-unified .cover-unified__video-el {
+    position: absolute;
+    z-index: 0;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    height: 100%;
+    width: 177.77777778vh;
+    min-width: 100%;
+    min-height: 56.25vw;
+    object-fit: cover;
+    display: block;
+    background-color: #000;
+}
+
+/* Desktop: stack title (above midline) + credits (below midline) over video */
+@media screen and (min-width: 1024px) {
+    .cover-unified__title-block {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 50%;
+        transform: translateY(calc(-100% - 0.6rem));
+        z-index: 2;
+        text-align: center;
+        pointer-events: none;
+        padding: 0 1rem;
+        box-sizing: border-box;
+    }
+
+    .cover-unified__credits-block {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 50%;
+        transform: translateY(0.6rem);
+        z-index: 2;
+        text-align: center;
+        pointer-events: none;
+        padding: 0 1rem;
+        box-sizing: border-box;
+    }
+
+    .cover-unified__title-block a,
+    .cover-unified__credits-block a {
+        pointer-events: auto;
+    }
+}
+
+#cover.cover-unified .cover-unified__title {
+    font-size: clamp(1.5rem, 4vw, 3.25rem);
+    line-height: 1.28;
+    font-weight: 600;
+    margin: 0;
+}
+
+#cover.cover-unified .cover-unified__authors {
+    font-size: clamp(0.78rem, 1.35vw, 1.35rem);
+    font-weight: 400;
+    line-height: 1.45;
+    margin: 0;
+}
+
+#cover.cover-unified .cover-unified__affiliations {
+    font-size: clamp(0.58rem, 0.95vw, 1.05rem);
+    line-height: 1.45;
+    margin: 0.85rem 0 0;
+}
+
+#cover.cover-unified .cover-unified__authors a {
+    color: hsl(204, 86%, 68%);
+}
+
+#cover.cover-unified .cover-unified__authors a:hover {
+    color: #fff;
+    text-decoration: underline;
+}
+
+@media screen and (max-width: 1023px) {
+    #cover.cover-unified {
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+        overflow-x: hidden;
+    }
+
+    .cover-unified__flow {
+        position: relative !important;
+        flex: 1 1 auto;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        inset: auto !important;
+        width: 100%;
+    }
+
+    /* DOM order: video, title, credits — flex order shows title, video, credits */
+    .cover-unified__video-wrap {
+        position: relative !important;
+        flex: 1 1 auto;
+        min-height: 44vh;
+        height: 46vh;
+        width: 100%;
+        order: 2;
+        inset: auto !important;
+        overflow: hidden;
+    }
+
+    #cover.cover-unified .cover-unified__video-el {
+        position: absolute !important;
+        z-index: 0 !important;
+        left: 0 !important;
+        top: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        max-width: none !important;
+        max-height: none !important;
+        min-width: 100% !important;
+        min-height: 100% !important;
+        transform: translate3d(0, 0, 0) !important;
+        -webkit-transform: translate3d(0, 0, 0) !important;
+        object-fit: cover;
+        object-position: center;
+    }
+
+    .cover-unified__title-block {
+        position: relative !important;
+        transform: none !important;
+        top: auto !important;
+        order: 1;
+        flex: 0 0 auto;
+        width: 100%;
+        padding-top: max(2.5vh, calc(2.75rem + env(safe-area-inset-top, 0px)));
+        padding-left: 0.65rem;
+        padding-right: 0.65rem;
+        padding-bottom: 0.5rem;
+        box-sizing: border-box;
+        pointer-events: auto;
+    }
+
+    .cover-unified__credits-block {
+        position: relative !important;
+        transform: none !important;
+        top: auto !important;
+        order: 3;
+        flex: 0 0 auto;
+        width: 100%;
+        padding-bottom: max(10vh, calc(3.5rem + env(safe-area-inset-bottom, 0px)));
+        padding-left: 0.65rem;
+        padding-right: 0.65rem;
+        padding-top: 0.35rem;
+        box-sizing: border-box;
+        pointer-events: auto;
+    }
+
+    /* Bulma is-size-6-mobile on <sup> is too large next to scaled author/affiliation text */
+    #cover.cover-unified .cover-unified__authors sup,
+    #cover.cover-unified .cover-unified__affiliations sup {
+        font-size: 0.58em !important;
+        line-height: 0;
+        vertical-align: super;
+        font-weight: inherit;
+    }
+}
+
+@media screen and (max-width: 768px) {
+    #cover.cover-unified .cover-unified__title {
+        font-size: clamp(1.05rem, 4.8vw, 1.35rem) !important;
+        line-height: 1.35 !important;
+    }
+
+    #cover.cover-unified .cover-unified__authors {
+        font-size: 0.68rem !important;
+        line-height: 1.4 !important;
+    }
+
+    #cover.cover-unified .cover-unified__affiliations {
+        font-size: 0.55rem !important;
+        line-height: 1.38 !important;
+        margin-top: 0.65rem !important;
+    }
+}
+
+.column-my {
+    flex: 1;
+    /* Ensures both columns take up equal width */
+    display: flex;
+    flex-direction: column;
+}
+
+.text-white {
+    color: white;
+}
+
+.half {
+    flex: 1;
+    /* Each child takes half the height of the column */
+    display: flex;
+    /* Make it a flex container */
+    justify-content: center;
+    /* Center horizontally */
+    align-items: center;
+    /* Center vertically */
+    text-align: center;
+    /* Align text within the element */
+}
+
+html,
+body {
+    margin: 0;
+    scroll-behavior: smooth;
+    overflow-x: hidden;
+    overflow-y: auto;
+    font-family: 'Linux Biolium', sans-serif;
+}
+
+.scroll-container {
+    height: auto;
+    overflow: visible;
+}
+
+/**
+.section {
+  height: 100vh;
+  scroll-snap-align: start;
+  color: white;
+  background-color: #000000;
+}
+  **/
+
+@keyframes glowAnimation {
+    0% {
+        mask-image: radial-gradient(circle, rgba(255, 255, 255, 0) 40%, rgba(116, 64, 188, 0.7) 100%);
+    }
+
+    50% {
+        mask-image: radial-gradient(circle, rgba(255, 255, 255, 0) 30%, rgba(0, 255, 255, 0.8) 100%);
+    }
+
+    100% {
+        mask-image: radial-gradient(circle, rgba(255, 255, 255, 0) 40%, rgba(163, 82, 145, 0.8) 100%);
+    }
+}
+
+/*
+.section {
+  height: 100vh;
+  scroll-snap-align: start;
+  color: white;
+  background-color: #000000;
+  position: relative; 
+}
+*/
+
+.gradient-text-leftclick {
+    background: linear-gradient(45deg, #4e54c8, #8f94fb);
+    /* background: linear-gradient(45deg, #0086d4, #4e54c8); */
+    /* Define your gradient */
+    -webkit-background-clip: text;
+    /* Required for Safari */
+    background-clip: text;
+    /* Standard for modern browsers */
+    color: transparent;
+    /* Set text color to transparent */
+}
+
+.gradient-text-rightclick {
+    background: linear-gradient(45deg, #8f94fb, #7960ca);
+    /* background: linear-gradient(45deg, #4e54c8, #8f94fb); */
+    /* Define your gradient */
+    -webkit-background-clip: text;
+    /* Required for Safari */
+    background-clip: text;
+    /* Standard for modern browsers */
+    color: transparent;
+    /* Set text color to transparent */
+}
+
+.gradient-text-scroll {
+    background: linear-gradient(45deg, #7960ca, #c672c5);
+    /* background: linear-gradient(45deg, #8f94fb, #7960ca); */
+    /* Define your gradient */
+    -webkit-background-clip: text;
+    /* Required for Safari */
+    background-clip: text;
+    /* Standard for modern browsers */
+    color: transparent;
+    /* Set text color to transparent */
+}
+
+.gradient-text-slide {
+    background: linear-gradient(45deg, #0086d4, #4e54c8);
+    /* background: linear-gradient(45deg, #7960ca, #c672c5); */
+    /* Define your gradient */
+    -webkit-background-clip: text;
+    /* Required for Safari */
+    background-clip: text;
+    /* Standard for modern browsers */
+    color: transparent;
+    /* Set text color to transparent */
+}
+
+.section {
+    min-height: 100vh;
+    scroll-snap-align: start;
+    color: white;
+    flex-direction: column;
+    background-color: #000000;
+    position: relative;
+    display: flex;
+    /* Enables Flexbox layout */
+    justify-content: center;
+    /* Centers content horizontally */
+    align-items: center;
+    /* Centers content vertically */
+}
+
+/* Content sections use normal block flow so tall figures never visually
+   bleed into adjacent sections (flex + justify-content:center does that
+   when content exceeds the viewport height, especially on smaller screens). */
+.section.is-medium {
+    display: block !important;
+    padding-top: 6rem;
+    padding-bottom: 4rem;
+    text-align: center;
+}
+
+/* 
+.section::before {
+content: ''; 
+position: absolute;
+top: 0;
+left: 0;
+width: 100%;
+height: 100%;
+background: radial-gradient(farthest-corner, rgba(255, 255, 255, 0) 70%, rgba(133, 72, 255, 0.342) 100%);
+pointer-events: none;
+z-index: 1000;
+} 
+*/
+
+.section-nav {
+    position: fixed;
+    top: 50%;
+    right: 0.8vh;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 1vh;
+    z-index: 100;
+}
+
+.section-nav .dot {
+    width: 1.3vh;
+    height: 1.3vh;
+    border-radius: 50%;
+    background: #ccc;
+    transition: background 0.3s ease;
+}
+
+.section-nav .dot:hover,
+.section-nav .dot.active {
+    background: #36e9e6;
+}
+
+.pad {
+    width: 300px;
+    height: 300px;
+    background-color: #ccc;
+    position: relative;
+    border: 2px solid #888;
+    border-radius: 8px;
+    touch-action: none;
+    /* for better mobile support */
+    user-select: none;
+}
+
+.pad-dot {
+    width: 20px;
+    height: 20px;
+    background-color: red;
+    border-radius: 50%;
+    position: absolute;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    /* allow events to pass through */
+}

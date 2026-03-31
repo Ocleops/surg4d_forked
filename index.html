@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<!-- saved from url=(0035)https://www.guangzhaohe.com/canor/# -->
+<html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  
+
+  <meta name="description" content="A 4D Representation for Training-Free Agentic Reasoning from Monocular Laparoscopic Video">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="keywords" content="Agentic 4D Spatiotemporal Reasoning, 4D Grounding in Abdominal Surgery, Deformable Surgical Scene Understanding">
+  <title>
+    A 4D Representation for Training-Free Agentic Reasoning from Monocular Laparoscopic Video
+  </title>
+
+  <meta name="msapplication-TileColor" content="#FFFFFF">
+
+  <link rel="icon" href="./project_page/chart-bubble.svg" type="image/svg+xml">
+
+  <link href="./project_page/css" rel="stylesheet">
+
+  <!-- <link href="https://cdn.jsdelivr.net/npm/modern-normalize@3.0.1/modern-normalize.min.css" rel="stylesheet" /> -->
+  <link href="./project_page/tabler-icons-outline.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="./project_page/bulma.min.css">
+  <link rel="stylesheet" href="./project_page/bulma-carousel.min.css">
+  <link rel="stylesheet" href="./project_page/bulma-slider.min.css">
+  <!-- <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css"> -->
+  <link rel="stylesheet" href="./project_page/index.css">
+  <link rel="stylesheet" href="./project_page/jquery-ui.css">
+  <link rel="stylesheet" href="./project_page/style.css">
+  <link rel="stylesheet" href="./project_page/reasoning.css">
+  <!-- Mobile top bar only ≤1023px. Unscoped display:flex was beating Bulma is-hidden-desktop (# id wins) and duplicated desktop #top-bar. -->
+  <style>
+    @media screen and (min-width: 1024px) {
+      #mobile-top-bar {
+        display: none !important;
+      }
+    }
+    @media screen and (max-width: 1023px) {
+      #mobile-top-bar {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        z-index: 1000 !important;
+        box-sizing: border-box !important;
+        display: flex !important;
+        flex-wrap: wrap !important;
+        justify-content: flex-end !important;
+        align-items: center !important;
+        gap: 0.5rem 1rem !important;
+        padding: 0.4rem 0.75rem !important;
+        padding-top: max(0.4rem, env(safe-area-inset-top, 0px)) !important;
+        background: #000000 !important;
+        background-color: #000000 !important;
+        color: #ffffff !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
+      }
+      #mobile-top-bar a,
+      #mobile-top-bar a:link,
+      #mobile-top-bar a:visited {
+        color: #ffffff !important;
+        font-size: 0.8125rem !important;
+        text-decoration: none !important;
+        padding: 0.25rem 0.45rem !important;
+      }
+      #mobile-top-bar a:hover,
+      #mobile-top-bar a:active {
+        color: #ffffff !important;
+        text-decoration: underline !important;
+      }
+    }
+  </style>
+
+  <script src="./project_page/bulma-carousel.min.js"></script>
+  <script src="./project_page/bulma-slider.min.js"></script>
+  <script src="./project_page/index.js"></script>
+  <script src="./project_page/select.js"></script>
+  <script src="./project_page/jquery-3.7.1.min.js"></script>
+  <script src="./project_page/jquery-ui.min.js"></script>
+  
+  <!-- import { unzipSync, strFromU8 } from 'https://cdn.jsdelivr.net/npm/fflate@0.8.1/esm/index.js'; -->
+
+  <!-- <script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer@latest/dist/model-viewer.js"></script> -->
+  <!-- <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script> -->
+  <!-- <script nomodule src="https://unpkg.com/@google/model-viewer/dist/model-viewer-legacy.js"></script> -->
+  <script type="module" src="./project_page/model-viewer.min.js"></script>
+</head>
+
+<body data-new-gr-c-s-check-loaded="14.1254.0" data-gr-ext-installed="">
+
+  <div class="scroll-container">
+
+    <div class="section-nav">
+      <!-- TODO: fix this!-->
+      <a href="#cover" class="dot active" title="Cover"></a>
+      <a href="#intro" class="dot" title="Introduction"></a>
+      <a href="#method" class="dot" title="Method"></a>
+      <a href="#results" class="dot" title="Results"></a>
+      <a href="#miscellaneous" class="dot" title="Miscellaneous"></a>
+    </div>
+
+    <!-- Outside #cover (is-hidden-touch). No Bulma .navbar here — it defaults to white bg and can expand to a full-height menu on small widths. -->
+    <div id="mobile-top-bar" class="mobile-top-links is-hidden-desktop myfont" aria-label="Paper, code, and data links" style="background-color:#000;">
+      <a href="#" style="color:#fff;">Paper</a>
+      <a href="https://github.com/tum-ai/surg4d.git" style="color:#fff;">Code</a>
+      <a href="https://github.com/tum-ai/surg4d.git" style="color:#fff;">Data</a>
+    </div>
+
+    <!-- One cover for all breakpoints: edit title / authors / affiliations / video only in this block. -->
+    <div class="section hero is-link is-fullheight video hero-cover-touch cover-unified" id="cover" style="overflow: hidden; position: relative; background-color: #000;">
+      <div class="cover-unified__flow">
+        <div class="cover-unified__video-wrap">
+          <!-- Video directly under the positioned wrap (nested absolute divs often stay black on iOS Safari). -->
+          <video id="cover-teaser-video" class="cover-unified__video-el" playsinline webkit-playsinline autoplay muted loop preload="auto">
+            <source src="project_page/rgb_semantic.mp4" type="video/mp4">
+          </video>
+          <div class="overlay" aria-hidden="true"></div>
+        </div>
+
+        <div class="cover-unified__title-block">
+          <div class="container has-text-centered" style="max-width: 100%; width: 100%;">
+            <h1 class="cover-unified__title title is-1 publication-title is-size-1-mobile myfont">
+              A 4D Representation for Training-Free Agentic Reasoning from Monocular Laparoscopic Video
+            </h1>
+          </div>
+        </div>
+        <div class="cover-unified__credits-block">
+          <div class="container has-text-centered" style="max-width: 100%; width: 100%;">
+            <h2 class="cover-unified__authors is-2 is-size-4-mobile myfont">
+              <span class="myfont"><a href="https://scholar.google.com/citations?user=YHRYsjAAAAAJ&amp;hl=en">Maximilian Fehrentz*<sup class="is-size-6-mobile">1,2,4</sup></a>, </span>
+              <span class="myfont">Nicolas Stellwag*<sup class="is-size-6-mobile">2</sup>, </span>
+              <span class="myfont">Robert Wiebe<sup class="is-size-6-mobile">2</sup>, </span>
+              <span class="myfont">Nicole Thorisch<sup class="is-size-6-mobile">2</sup>, </span>
+              <span class="myfont"><a href="https://scholar.google.com/citations?user=eMgwc9gAAAAJ&amp;hl=en">Fabian Grob<sup class="is-size-6-mobile">2</sup></a>, </span>
+              <span class="myfont"><a href="https://scholar.google.com/citations?user=VKRaSnAAAAAJ&amp;hl=en">Patrick Remerscheid<sup class="is-size-6-mobile">2</sup></a>, </span>
+              <span class="myfont"><a href="https://scholar.google.com/citations?user=zUu5nOAAAAAJ&amp;hl=en">Ken-Joel Simmoteit<sup class="is-size-6-mobile">2</sup></a>, </span>
+              <span class="myfont"><a href="https://scholar.google.com/citations?user=QX7AvxUAAAAJ&amp;hl=en">Benjamin D. Killeen<sup class="is-size-6-mobile">1,4</sup></a>, </span>
+              <span class="myfont"><a href="https://scholar.google.com/citations?user=VMdsd2cAAAAJ&amp;hl=en">Christian Heiliger<sup class="is-size-6-mobile">3</sup></a>, </span>
+              <span class="myfont"><a href="https://scholar.google.com/citations?user=kzoVUPYAAAAJ&amp;hl=en">Nassir Navab<sup class="is-size-6-mobile">1,4</sup></a></span>
+            </h2>
+            <p class="cover-unified__affiliations is-5 is-size-5-mobile myfont">
+              <sup class="is-size-6-mobile">1</sup> Computer Aided Medical Procedures, TU Munich, Munich, Germany <br>
+              <sup class="is-size-6-mobile">2</sup> TUM.ai, Munich, Germany <br>
+              <sup class="is-size-6-mobile">3</sup> Hospital of the LMU Munich, Ludwig-Maximilians-Universität (LMU), Munich, Germany <br>
+              <sup class="is-size-6-mobile">4</sup> Munich Center for Machine Learning, Munich, Germany
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Desktop Top Bar -->
+      <div id="top-bar" class="hero-head is-hidden-touch" style="position: fixed; top: 0px; right: 0px; z-index: 1000; opacity: 1; pointer-events: auto; transition: opacity 0.3s;">
+        <header class="navbar is-hidden-touch">
+          <div class="container is-size-5" style="margin-right:10px;">
+            <div class="navbar-menu">
+              <div class="navbar-end">
+
+                <a class="navbar-item pl-4 pr-4" href="#" style="font-size: clamp(0.8rem, 1.4vw, 1.2rem);">
+                  <!--- TODO: add the icons again later --->
+                  <!-- <i class="ti ti-file" style="margin-right: 0.3vw;"></i> -->
+                  <span class="myfont">Paper</span>
+                </a>
+
+                <a class="navbar-item pl-4 pr-4" href="https://github.com/tum-ai/surg4d.git" style="font-size: clamp(0.8rem, 1.4vw, 1.2rem);">
+                  <!--- TODO: add the icons again later --->
+                  <!-- <i class="ti ti-code" style="margin-right: 0.3vw;;"></i> -->
+                  <span class="myfont">Code</span>
+                </a>
+
+                <!-- point to current website, data is not available yet-->
+                <a class="navbar-item pl-4 pr-4" href="https://github.com/tum-ai/surg4d.git" style="font-size: clamp(0.8rem, 1.4vw, 1.2rem);">
+                  <!--- TODO: add the icons again later --->
+                  <!-- <i class="ti ti-code" style="margin-right: 0.3vw;;"></i> -->
+                  <span class="myfont">Data</span>
+                </a>
+
+              </div>
+            </div>
+          </div>
+        </header>
+      </div>
+
+      <div id="menu-footer" class="hero-foot is-hidden-mobile myfont" style="position: fixed; bottom: 0px; left: 0px; width: 100%; z-index: 10; opacity: 1; pointer-events: auto; transition: opacity 0.3s;">
+        <nav class="tabs is-boxed is-fullwidth is-size-5" style="font-size: clamp(0.8rem, 2vw, 1.2rem)">
+          <ul>
+            <li><a href="#cover">Cover</a></li>
+            <li><a href="#intro">Abstract</a></li>
+            <li><a href="#method">Method</a></li>
+            <li><a href="#results">Results</a></li>
+            <li><a href="#miscellaneous">Miscellaneous</a></li>
+          </ul>
+        </nav>
+      </div>
+
+      <!-- Mobile Navigation -->
+      <div id="mobile-menu" class="hero-foot is-hidden-desktop myfont" style="position: fixed; bottom: 0px; left: 0px; width: 100%; z-index: 10; opacity: 1; pointer-events: auto; transition: opacity 0.3s; background: rgba(0,0,0,0.8);">
+        <nav class="tabs is-boxed is-fullwidth" style="font-size: 0.8rem;">
+          <ul>
+            <li><a href="#cover">Cover</a></li>
+            <li><a href="#intro">Intro</a></li>
+            <li><a href="#method">Method</a></li>
+            <li><a href="#results">Results</a></li>
+            <li><a href="#miscellaneous">Misc</a></li>
+          </ul>
+        </nav>
+      </div>
+
+    </div>
+
+    <!-- Intro -->
+    <div class="section is-medium myfont" id="intro">
+      <!-- Title -->
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; max-height: 10vh;">
+        <div class="container">
+          <h1 class="title is-size-1-mobile text-white" style="font-size: clamp(1.5rem, 3vw, 2.5rem);">
+            Abstract
+          </h1>
+        </div>
+      </div>
+
+      <br>
+
+      <div class="content is-size-6-mobile" style="font-size: clamp(0.9rem, 1.3vw, 1.1rem); width: 90%; max-width: 800px; text-align: center; margin: 0 auto;">
+        Spatiotemporal reasoning is a fundamental capability for artificial intelligence (AI) in soft tissue surgery, paving the way for intelligent assistive systems and autonomous robotics. While 2D vision-language models show increasing promise at understanding surgical video, the spatial complexity of surgical scenes suggests that reasoning systems may benefit from explicit 4D representations. Here, we propose a framework for equipping surgical agents with spatiotemporal tools based on an explicit 4D representation, enabling AI systems to ground their natural language reasoning in both time and 3D space. Leveraging models for point tracking, depth, and segmentation, we develop a coherent 4D model with spatiotemporally consistent tool and tissue semantics. A Multimodal Large Language Model (MLLM) then acts as an agent on tools derived from the explicit 4D representation (e.g., trajectories) without any fine-tuning. We evaluate our method on a new dataset of 134 clinically relevant questions and find that the combination of a general purpose reasoning backbone and our 4D representation significantly improves spatiotemporal understanding and allows for 4D grounding. We demonstrate that spatiotemporal intelligence can be “assembled” from 2D MLLMs and 3D computer vision models without additional training.
+      </div>
+    </div>
+
+   
+
+    <!-- Method -->
+    <div class="section is-medium myfont" id="method">
+      <!-- Title -->
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; max-height: 10vh;">
+        <div class="container">
+          <h1 class="title is-1 is-size-1-mobile text-white" style="font-size: clamp(1.5rem, 3vw, 2.5rem);">
+            Method
+          </h1>
+        </div>
+      </div>
+
+      <br>
+      <div class="content is-6 is-size-6-mobile" style="font-size: clamp(0.9rem, 1.3vw, 1.1rem); width: 90%; max-width: 800px; text-align: center; margin: 0 auto;">
+        Given a monocular 2D video sequence, our method creates a tracked semantic 4D representation and provides spatiotemporal information as tools to a 2D MLLM Agent. Upon receiving a query, the agent iteratively requests and interprets spatiotemporal information from our 4D representation to inform its response.
+      </div>
+
+      <div style="text-align: center; margin-top: 2rem;">
+        <img src="./project_page/method figure.png" alt="Method Overview Image" style="max-width: min(90%, 800px); width: 100%; height: auto; filter: brightness(90%);">
+      </div>
+    </div>
+
+
+    <!-- Results -->
+    <div class="section is-medium myfont" id="results">
+      <!-- Title -->
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; max-height: 10vh;">
+        <div class="container">
+          <h1 class="title is-1 is-size-1-mobile text-white" style="font-size: clamp(1.5rem, 3vw, 2.5rem);">
+            Results
+          </h1>
+        </div>
+      </div>
+
+      <br>
+
+      <div class="content is-6 is-size-6-mobile reasoning-section-lead">
+        We evaluate on 134 clinically motivated queries that require spatiotemporal reasoning over tool–tissue interaction. In particular, we want to understand how tissue is manipulated as the decision-making on grasping points, retraction directions, and dissection locations is a key indicator for surgical intelligence. Tasks are <em>spatial</em> (where an interaction occurs in 3D at a timestep), <em>temporal</em> (when a query holds), and <em>directional</em> (how motion evolves).
+      </div>
+      <h3 class="reasoning-nav-subhead"><em>How To Navigate Below 4D Scenes</em></h3>
+      <p class="reasoning-nav-text">
+        The 4D visualizations below are interactive. For optimized usage: pan by holding left-click and moving your cursor, translate the camera by holding left- and right-click, rotate around the camera axis by holding option, and zoom by scrolling. With space, you can start and stop the video. With the arrow keys, you can additionally move frame by frame. You may also use the control bar below to loop sequences or directly scroll through the timeline yourself. Be advised that loading the files may take a moment.
+      </p>
+
+      <div style="text-align: center; margin-top: 3rem;">
+        <h2 class="reasoning-subhead reasoning-subhead-center reasoning-task-header">
+          Interactive Examples of Tracked 4D Reconstructions from Unposed 2D Monocular Video
+        </h2>
+        <div class="rerun-overview-row">
+          <div class="rerun-cell" id="rerun-1" data-rrd-url="./project_page/assets/rrd/video01_28580/graph_final/visualization.rrd"></div>
+          <div class="rerun-cell" id="rerun-2" data-rrd-url="./project_page/assets/rrd/video12_19500/graph_final/visualization.rrd"></div>
+          <div class="rerun-cell" id="rerun-3" data-rrd-url="./project_page/assets/rrd/video17_01563/graph_final/visualization.rrd"></div>
+        </div>
+      </div>
+
+      <h2 class="reasoning-subhead reasoning-subhead-center reasoning-task-header">Spatial grounding</h2>
+      <p class="reasoning-storyline reasoning-storyline-center">To perform spatial grounding in 3D, we pose a query for a specific timestep. Below examples show the corresponding frame on the left, the interactive 4D visualization for the whole sequence in the middle, and the 2D projection of the model's answer on the right, overlayed as a blue dot on the frame corresponding to the query. Note that the agent does not receive that frame and only operates on the 4D representation.<br> <strong><i>To interpret the 4D visualization correctly: at the specific timestep, structures and interaction points that the agent requested via a tool call will light up in blue and red and their 3D state at that time will remain frozen and visible as the sequence progresses. You may use the arrow keys or the timeline scrollbar to easily find the relevant timestep. For the agent, only this state matters for the spatial queries. Interaction points are highlighted with a red dot in 3D.</i></strong></p>
+
+      <p class="reasoning-query">Where is the grasper in the back gripping the gallbladder?</p>
+      <div class="reasoning-row">
+        <div>
+          <div class="reasoning-col-label">Frame at query time</div>
+          <div class="reasoning-media reasoning-viz-tile"><img src="./data/preprocessed/clean/video24_09676/images/frame_000060.png" alt="GT frame video24_09676"></div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">4D Visualization</div>
+          <div class="reasoning-rerun-host reasoning-viz-tile" id="reasoning-sp-0" data-rrd-url="./project_page/assets/rrd/predictions_final/tool_viz/spatial/video24_09676/graph_agent_semantics_t015_video24_09676_spatial_0_Where_is_the_grasper_in_the_back_gripping_the_gall.rrd"></div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">Predicted 2D point</div>
+          <div class="reasoning-pred reasoning-viz-tile"><img src="./output/final/predictions_final/spatial_viz/graph_agent_semantics/video24_09676/000060_video24_09676_spatial_0_where_is_the_grasper_in_the_back_gripping_the_gallbladder.png" alt="Prediction spatial 0"></div>
+        </div>
+      </div>
+      <p class="reasoning-query">Where is the L-hook coagulating the gallbladder?</p>
+      <div class="reasoning-row">
+        <div>
+          <div class="reasoning-col-label">Frame at query time</div>
+          <div class="reasoning-media reasoning-viz-tile"><img src="./data/preprocessed/clean/video12_19980/images/frame_000072.png" alt="GT frame video12_19980"></div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">4D Visualization</div>
+          <div class="reasoning-rerun-host reasoning-viz-tile" id="reasoning-sp-1" data-rrd-url="./project_page/assets/rrd/predictions_final/tool_viz/spatial/video12_19980/graph_agent_semantics_t018_video12_19980_spatial_0_Where_is_the_l-hook_coagulating_the_gallbladder.rrd"></div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">Predicted 2D point</div>
+          <div class="reasoning-pred reasoning-viz-tile"><img src="./output/final/predictions_final/spatial_viz/graph_agent_semantics/video12_19980/000072_video12_19980_spatial_0_where_is_the_l-hook_coagulating_the_gallbladder.png" alt="Prediction"></div>
+        </div>
+      </div>
+      <p class="reasoning-query">Where is the grasper behind the L-hook holding the gallbladder?</p>
+      <div class="reasoning-row">
+        <div>
+          <div class="reasoning-col-label">Frame at query time</div>
+          <div class="reasoning-media reasoning-viz-tile"><img src="./data/preprocessed/clean/video12_19500/images/frame_000028.png" alt="GT frame video12_19500"></div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">4D Visualization</div>
+          <div class="reasoning-rerun-host reasoning-viz-tile" id="reasoning-sp-2" data-rrd-url="./project_page/assets/rrd/predictions_final/tool_viz/spatial/video12_19500/graph_agent_semantics_t007_video12_19500_spatial_1_Where_is_the_grasper_behind_the_l-hook_holding_the.rrd"></div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">Predicted 2D point</div>
+          <div class="reasoning-pred reasoning-viz-tile"><img src="./output/final/predictions_final/spatial_viz/graph_agent_semantics/video12_19500/000028_video12_19500_spatial_1_where_is_the_grasper_behind_the_l-hook_holding_the_gallbladder.png" alt="Prediction"></div>
+        </div>
+      </div>
+      <p class="reasoning-query">Where does the grasper grip the gallbladder?</p>
+      <div class="reasoning-row">
+        <div>
+          <div class="reasoning-col-label">Frame at query time</div>
+          <div class="reasoning-media reasoning-viz-tile"><img src="./data/preprocessed/clean/video17_01803/images/frame_000052.png" alt="GT frame video17_01803"></div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">4D Visualization</div>
+          <div class="reasoning-rerun-host reasoning-viz-tile" id="reasoning-sp-3" data-rrd-url="./project_page/assets/rrd/predictions_final/tool_viz/spatial/video17_01803/graph_agent_semantics_t013_video17_01803_spatial_0_Where_does_the_grasper_grip_the_gallbladder.rrd"></div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">Predicted 2D point</div>
+          <div class="reasoning-pred reasoning-viz-tile"><img src="./output/final/predictions_final/spatial_viz/graph_agent_semantics/video17_01803/000052_video17_01803_spatial_0_where_does_the_grasper_grip_the_gallbladder.png" alt="Prediction"></div>
+        </div>
+      </div>
+      <p class="reasoning-query">Where is the L-hook hooked into the connective tissue of the gallbladder?</p>
+      <div class="reasoning-row">
+        <div>
+          <div class="reasoning-col-label">Frame at query time</div>
+          <div class="reasoning-media reasoning-viz-tile"><img src="./data/preprocessed/clean/video55_00588/images/frame_000064.png" alt="GT frame video55_00588"></div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">4D Visualization</div>
+          <div class="reasoning-rerun-host reasoning-viz-tile" id="reasoning-sp-4" data-rrd-url="./project_page/assets/rrd/predictions_final/tool_viz/spatial/video55_00588/graph_agent_semantics_t016_video55_00588_spatial_2_Where_is_the_l-hook_hooked_into_the_connective_tis.rrd"></div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">Predicted 2D point</div>
+          <div class="reasoning-pred reasoning-viz-tile"><img src="./output/final/predictions_final/spatial_viz/graph_agent_semantics/video55_00588/000064_video55_00588_spatial_2_where_is_the_l-hook_hooked_into_the_connective_tissue_of_the_gallbladder.png" alt="Prediction"></div>
+        </div>
+      </div>
+      <!-- <p class="reasoning-query">Where is the front grasper gripping the gallbladder?</p>
+      <div class="reasoning-row">
+        <div>
+          <div class="reasoning-col-label">Frame at query time</div>
+          <div class="reasoning-media reasoning-viz-tile"><img src="./data/preprocessed/clean/video52_02826/images/frame_000016.png" alt="GT frame video52_02826"></div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">4D Visualization</div>
+          <div class="reasoning-rerun-host reasoning-viz-tile" id="reasoning-sp-5" data-rrd-url="./project_page/assets/rrd/predictions_final/tool_viz/spatial/video52_02826/graph_agent_semantics_t004_video52_02826_spatial_0_Where_is_the_front_grasper_gripping_the_gallbladde.rrd"></div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">Predicted 2D point</div>
+          <div class="reasoning-pred reasoning-viz-tile"><img src="./output/final/predictions_final/spatial_viz/graph_agent_semantics/video52_02826/000016_video52_02826_spatial_0_where_is_the_front_grasper_gripping_the_gallbladder.png" alt="Prediction front"></div>
+        </div>
+      </div>
+      <p class="reasoning-query">Where is the back grasper gripping the gallbladder?</p>
+      <div class="reasoning-row">
+        <div>
+          <div class="reasoning-col-label">Frame at query time</div>
+          <div class="reasoning-media reasoning-viz-tile"><img src="./data/preprocessed/clean/video52_02826/images/frame_000016.png" alt="GT frame video52_02826"></div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">4D Visualization</div>
+          <div class="reasoning-rerun-host reasoning-viz-tile" id="reasoning-sp-6" data-rrd-url="./project_page/assets/rrd/predictions_final/tool_viz/spatial/video52_02826/graph_agent_semantics_t004_video52_02826_spatial_1_Where_is_the_back_grasper_gripping_the_gallbladder.rrd"></div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">Predicted 2D point</div>
+          <div class="reasoning-pred reasoning-viz-tile"><img src="./output/final/predictions_final/spatial_viz/graph_agent_semantics/video52_02826/000016_video52_02826_spatial_1_where_is_the_back_grasper_gripping_the_gallbladder.png" alt="Prediction back"></div>
+        </div>
+      </div> -->
+
+      <h2 class="reasoning-subhead reasoning-subhead-center reasoning-task-header">Temporal grounding</h2>
+      <p class="reasoning-storyline reasoning-storyline-center">For temporal grounding, we ask the agent to either determine the starting point or the duration of a query. All temporal queries require spatial reasoning as well, as shown in the example below.<br><strong><i>To interpret the visualization, the relevant structures the agent interacted with via tool calls are again highlighted in dark blue and red. Here, they were requested over the whole sequence and distance and overlap scores were used. Refer to the partial reasoning trace below to understand how the agent used that information to answer the query.</i></strong></p>
+
+      <p class="reasoning-query">When is the L-hook touching the gallbladder?</p>
+      <div class="reasoning-row reasoning-row-2">
+        <div>
+          <div class="reasoning-col-label">Video</div>
+          <div class="reasoning-media reasoning-viz-tile">
+            <video playsinline controls muted loop preload="metadata" poster="./data/preprocessed/clean/video01_28580/images/frame_000000.png">
+              <source src="./project_page/reasoning_media/video01_28580_25fps.mp4" type="video/mp4">
+            </video>
+          </div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">4D Visualization</div>
+          <div class="reasoning-rerun-host reasoning-viz-tile" id="reasoning-temp-0" data-rrd-url="./project_page/assets/rrd/predictions_final/tool_viz/temporal/video01_28580/graph_agent_semantics_video01_28580_temporal_rng_1_When_is_the_l-hook_touching_the_gallbladder.rrd"></div>
+        </div>
+      </div>
+      <pre class="reasoning-trace-below reasoning-trace-raw">[...] Okay, so the tool response shows the distances between node 10 (L-hook) and node 5 (Connective Tissue) for all timesteps. The distances are all very small, like 0.15 to 0.3 cm, which is close to zero. Since the coordinate system is in cm, a distance of 0.1 cm would mean they are touching or very close. [...]
+
+The minimal distance values (0.1 cm) indicate contact. The distance starts increasing at t=14, so the contact likely stops around t=13. So the range is 0 to 13 inclusive. Let&#x27;s check the exact values: at t=13, the distance is 0.1143, and t=14 is 0.2096. So the contact is up to t=13. So the answer should be [0, 13].</pre>
+
+
+
+
+      <h2 class="reasoning-subhead reasoning-subhead-center reasoning-task-header">Directional reasoning</h2>
+      <p class="reasoning-storyline reasoning-storyline-center">It is a key surgical skill to apply traction and counter-traction by grasping and retracting tissue to create tension on the dissection plane. Therefore, to understand subtle tool-tissue interactions, we explore reasoning on motions unfolding over time and space. We evaluate on direct manipulation such as a tool manipulating anatomy, but also on the effect on secondary, surrounding tissue.<br><strong><i>To interpret the 4D visualizations and reasoning traces correctly, beware that the queries apply to a specific time window and the agent primarly uses tools to get 4D trajectories for the relevant window. The agent operates directly on trajectories but our output format is simplified to unit 3D direction vectors to allow fair comparison with 2D baselines that do not have access to explicit 3D coordinates. Start and end 3D points that mark a trajectory as computed by the used tool are visualized with start and end labels. By the presence of the labels, you can infer the relevant time window that the query refers to. You may also scrub the timeline and use the arrow keys to navigate the video for a closer look.</i></strong></p>
+
+      <p class="reasoning-query">In which direction is the grasper pulling the gallbladder?</p>
+      <div class="reasoning-row reasoning-row-2">
+        <div>
+          <div class="reasoning-col-label">Video</div>
+          <div class="reasoning-media reasoning-viz-tile">
+            <video playsinline controls muted loop preload="metadata">
+              <source src="./project_page/reasoning_media/video43_00787_25fps.mp4" type="video/mp4">
+            </video>
+          </div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">4D Visualization</div>
+          <div class="reasoning-rerun-host reasoning-viz-tile" data-rrd-url="./project_page/assets/rrd/predictions_final/tool_viz/directional/video43_00787/graph_agent_semantics_video43_00787_directional_0_In_which_direction_is_the_grasper_pulling_the_gall.rrd"></div>
+        </div>
+      </div>
+      <pre class="reasoning-trace-below reasoning-trace-raw">[...] The user asked for the direction the grasper is pulling the gallbladder in timesteps 0-9. The aggregated movement of the gallbladder (node 5) from 0 to 9 was given as x: 2.3809, y: -4.3444, z: 1.4213. [...]
+So the direction vector is {x: 1, y: -1, z: 1}.</pre>
+
+      <p class="reasoning-query">In which direction is the liver moving?</p>
+      <div class="reasoning-row reasoning-row-2">
+        <div>
+          <div class="reasoning-col-label">Video</div>
+          <div class="reasoning-media reasoning-viz-tile">
+            <video playsinline controls muted loop preload="metadata">
+              <source src="./project_page/reasoning_media/video25_00402_25fps.mp4" type="video/mp4">
+            </video>
+          </div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">4D Visualization</div>
+          <div class="reasoning-rerun-host reasoning-viz-tile" id="reasoning-dir-2" data-rrd-url="./project_page/assets/rrd/predictions_final/tool_viz/directional/video25_00402/graph_agent_semantics_video25_00402_directional_1_In_which_direction_is_the_liver_moving.rrd"></div>
+        </div>
+      </div>
+      <pre class="reasoning-trace-below reasoning-trace-raw">[...] Okay, so I need to figure out the direction the liver is moving between timesteps 2 and 8. The liver has two nodes: 3 and 4. The aggregated movement for node 3 is x: -1.1117, y: 2.04, z: -1.9683. For node 4, it&#x27;s x: -0.4594, y: 1.0699, z: -0.6127.
+First, check the x-direction. Both have negative x movement. For node 3, -1.1117 (left), node 4: -0.4594 (left). So both moving left, so x direction is -1.
+Y-direction: both have positive y (2.04 and 1.0699), which is downward (since y increases downward). So y direction is 1.
+Z-direction: both have negative z (z is movement toward camera, since z increases away from camera). Node 3: -1.9683 (toward camera), node 4: -0.6127 (toward camera). So z direction is -1.
+Both liver nodes are moving in the same direction for all axes. So the liver&#x27;s movement direction is x: -1, y: 1, z: -1.</pre>
+
+      <p class="reasoning-query">In which direction is the gallbladder moving?</p>
+      <div class="reasoning-row reasoning-row-2">
+        <div>
+          <div class="reasoning-col-label">Video</div>
+          <div class="reasoning-media reasoning-viz-tile">
+            <video playsinline controls muted loop preload="metadata">
+              <source src="./project_page/reasoning_media/video52_00160_25fps.mp4" type="video/mp4">
+            </video>
+          </div>
+        </div>
+        <div>
+          <div class="reasoning-col-label">4D Visualization</div>
+          <div class="reasoning-rerun-host reasoning-viz-tile" data-rrd-url="./project_page/assets/rrd/predictions_final/tool_viz/directional/video52_00160/graph_agent_semantics_video52_00160_directional_1_In_which_direction_is_the_gallbladder_moving.rrd"></div>
+        </div>
+      </div>
+      <pre class="reasoning-trace-below reasoning-trace-raw">[...] The tool response for aggregated_node_movement for node 4 (gallbladder) from timesteps 7 to 13 gives a movement vector of x: 1.5637, y: -4.6287, z: 1.2824. [...]
+So the direction vector should be {&quot;x&quot;: 1, &quot;y&quot;: -1, &quot;z&quot;: 1}.</pre>
+
+      <script type="module" src="./project_page/reasoning-rerun.js"></script>
+
+    </div>
+
+
+
+    <div class="section is-medium myfont" id="miscellaneous">
+      <!-- Title -->
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; max-height: 10vh;">
+        <div class="container">
+          <h1 class="title is-1 is-size-1-mobile text-white" style="font-size: clamp(1.5rem, 3vw, 2.5rem);">
+            Miscellaneous
+          </h1>
+        </div>
+      </div>
+
+      <br>
+      <br>
+
+      <!-- Bibtex: hidden until there is a citation (HTML comments cannot wrap BibTeX due to double-hyphens in pages={44--53}). -->
+      <div id="bibtex-section-disabled" hidden style="display:none" aria-hidden="true">
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; max-height: 10vh;">
+      <div class="container">
+        <h1 class="title is-1 is-hidden-touch text-white width: 90%;" style="font-size: clamp(1.2rem, 3vh, 1.8rem);">
+          Bibtex
+        </h1>
+      </div>
+    </div>
+
+    <br>
+
+    <div style="width: 80%; display: flex; flex-direction: column; align-items: center;">
+      <div class="columns is-centered is-hidden-touch">
+        <div class="content" style="margin-top: 10pt; width: 100%;">
+          <div style="
+            border-radius: 12px;
+            background-color: #1e1e1e;
+            padding: 5px;
+            overflow-x: auto;
+            width: 100%;
+          ">
+            <pre class="" style="
+              margin: 0;
+              background: transparent;
+              border-radius: 12px;
+            "><code style="color: #e0e0e0; background: transparent;">@inproceedings{}
+</code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <br>
+    <br>
+      </div>
+
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; max-height: 10vh;">
+      <div class="container">
+        <h1 class="title is-1 is-size-2-mobile text-white" style="font-size: clamp(1.2rem, 3vh, 1.8rem);">
+          Acknowledgements
+        </h1>
+      </div>
+    </div>
+
+    <br>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="columns is-centered">
+          <div class="column is-8">
+            <div class="content">
+              <p>
+                Website template modified from <a href="https://www.guangzhaohe.com/canor/#">Category-Agnostic Neural Object Rigging</a>.
+              </p>
+              <p>
+                This website is licensed under a <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/">Creative Commons Attribution-ShareAlike 4.0 International License</a>.
+              </p>
+              <p>
+                This means you are free to borrow and modify the source code of this website as long as you link back to the <a href="https://nerfies.github.io/">NeRFies</a> page in the footer.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </footer>
+
+    </div>
+
+  </div>
+
+    <script src="./project_page/script.js"></script>
+    <script>
+    // Nerfies-style: window-based scroll tracking for active nav dot + smooth anchors
+    (function() {
+      const sections = Array.from(document.querySelectorAll('.section'));
+      const dots = Array.from(document.querySelectorAll('.section-nav .dot'));
+
+      function getActiveSectionId() {
+        const mid = window.scrollY + window.innerHeight / 2;
+        let activeId = sections.length ? sections[0].id : '';
+        for (const s of sections) {
+          const top = s.offsetTop;
+          const bottom = top + s.offsetHeight;
+          if (mid >= top && mid < bottom) {
+            activeId = s.id;
+            break;
+          }
+        }
+        return activeId;
+      }
+
+      function updateDots() {
+        const current = getActiveSectionId();
+        dots.forEach(d => {
+          const href = d.getAttribute('href') || '';
+          const id = href.startsWith('#') ? href.slice(1) : href;
+          if (id === current) d.classList.add('active'); else d.classList.remove('active');
+        });
+      }
+
+      // Smooth anchor scroll
+      document.querySelectorAll('a[href^="#"]').forEach(a => {
+        a.addEventListener('click', e => {
+          const target = document.querySelector(a.getAttribute('href'));
+          if (target) {
+            e.preventDefault();
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        });
+      });
+
+      window.addEventListener('scroll', updateDots, { passive: true });
+      window.addEventListener('load', updateDots);
+      updateDots();
+    })();
+
+    // iOS Safari: nested absolute wrappers and strict autoplay rules often leave the teaser black; kick muted play after load.
+    (function() {
+      const v = document.getElementById('cover-teaser-video');
+      if (!v || typeof v.play !== 'function') return;
+      v.playbackRate = 2;
+      function kickCoverVideo() {
+        v.muted = true;
+        v.defaultMuted = true;
+        v.setAttribute('playsinline', '');
+        v.setAttribute('webkit-playsinline', '');
+        const p = v.play();
+        if (p && typeof p.catch === 'function') p.catch(function() {});
+      }
+      v.addEventListener('loadeddata', kickCoverVideo, { once: true });
+      window.addEventListener('load', kickCoverVideo);
+      document.addEventListener('visibilitychange', function() {
+        if (!document.hidden) kickCoverVideo();
+      });
+    })();
+    </script>

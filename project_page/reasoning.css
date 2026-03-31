@@ -1,0 +1,281 @@
+/* Results: media row + verbatim raw_response below */
+
+.reasoning-section-lead {
+  width: 92%;
+  max-width: 960px;
+  margin: 0 auto 2rem;
+  text-align: center;
+  font-size: clamp(0.9rem, 1.3vw, 1.05rem);
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.reasoning-subhead {
+  width: 95%;
+  max-width: 1800px;
+  margin: 2.5rem auto 0.75rem;
+  text-align: left;
+  font-size: clamp(1.05rem, 1.8vw, 1.35rem);
+  font-weight: 600;
+  color: #fff;
+}
+
+.reasoning-subhead.reasoning-subhead-center {
+  text-align: center;
+  max-width: 960px;
+}
+
+.reasoning-task-header {
+  margin-top: 4rem;
+  margin-bottom: 1rem;
+  text-align: center;
+  font-size: clamp(1.5rem, 3vw, 2.5rem);
+  font-weight: 700;
+}
+
+.reasoning-storyline {
+  width: 95%;
+  max-width: 1800px;
+  margin: 0 auto 1.25rem;
+  text-align: left;
+  font-size: clamp(0.85rem, 1.15vw, 1rem);
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.reasoning-storyline.reasoning-storyline-center {
+  text-align: center;
+  max-width: 960px;
+}
+
+.reasoning-query {
+  width: 95%;
+  max-width: 1800px;
+  margin: 2rem auto 0.5rem;
+  text-align: left;
+  font-size: clamp(1.2rem, 1.8vw, 1.75rem);
+  font-weight: 600;
+  color: #e8e8ff;
+  font-style: italic;
+}
+
+.reasoning-query::before {
+  content: "\"";
+}
+
+.reasoning-query::after {
+  content: "\"";
+}
+
+.reasoning-nav-subhead {
+  width: 92%;
+  max-width: 960px;
+  margin: 0.25rem auto 0.5rem;
+  text-align: center;
+  color: #fff;
+  font-weight: 400;
+  font-style: italic;
+  font-size: clamp(1.05rem, 1.8vw, 1.45rem);
+}
+
+.reasoning-nav-text {
+  width: 92%;
+  max-width: 960px;
+  margin: 0 auto 2rem;
+  text-align: center;
+  font-size: clamp(0.92rem, 1.25vw, 1.08rem);
+  line-height: 1.58;
+  color: rgba(255, 255, 255, 0.95);
+  font-weight: 400;
+  font-style: italic;
+}
+
+/* Three tiles: GT / 4D visualization / pred — columns stretch to one row height */
+.reasoning-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 0.75rem;
+  width: 95%;
+  max-width: 1800px;
+  margin: 0 auto;
+  align-items: stretch;
+}
+
+.reasoning-row > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.reasoning-row.reasoning-row-2 {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+}
+
+.reasoning-row.reasoning-row-2 > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.reasoning-col-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.45);
+  margin-bottom: 0.35rem;
+  flex-shrink: 0;
+}
+
+/* Fixed viewport-relative height so the 4D viewer gets a real box (not 300×150) */
+.reasoning-viz-tile {
+  position: relative;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: clamp(320px, 58vh, 780px);
+  height: clamp(320px, 58vh, 780px);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #141414;
+}
+
+.reasoning-media.reasoning-viz-tile,
+.reasoning-pred.reasoning-viz-tile {
+  display: block;
+}
+
+.reasoning-media video,
+.reasoning-media img,
+.reasoning-pred img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #0a0a0a;
+}
+
+/* 4D visualization host: fill the tile; canvas stretched to container */
+.reasoning-rerun-host {
+  display: block;
+}
+
+.reasoning-rerun-host canvas {
+  position: absolute !important;
+  left: 0;
+  top: 0;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  display: block !important;
+}
+
+.reasoning-trace-below {
+  width: 92%;
+  max-width: 960px;
+  margin: 0.5rem auto 2.25rem;
+  padding: 0 0.5rem;
+  text-align: center;
+  font-size: clamp(0.82rem, 1.05vw, 0.95rem);
+  line-height: 1.58;
+  color: rgba(255, 255, 255, 0.84);
+}
+
+/* Verbatim model output */
+pre.reasoning-trace-below.reasoning-trace-raw {
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, monospace;
+  font-size: clamp(0.72rem, 0.95vw, 0.82rem);
+  line-height: 1.45;
+  color: rgba(230, 230, 235, 0.92);
+  background: rgba(120, 120, 120, 0.2);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  max-height: 70vh;
+  overflow: auto;
+  font-style: italic;
+}
+
+pre.reasoning-trace-below.reasoning-trace-raw::before {
+  content: "\"";
+}
+
+pre.reasoning-trace-below.reasoning-trace-raw::after {
+  content: "\"";
+}
+
+.reasoning-pair-note {
+  width: 95%;
+  max-width: 1800px;
+  margin: -1rem auto 1rem;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.55);
+  font-style: italic;
+}
+
+.reasoning-details {
+  width: 95%;
+  max-width: 1800px;
+  margin: 1rem auto 2rem;
+  text-align: left;
+}
+
+.reasoning-details summary {
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.95rem;
+}
+
+.rerun-overview-row {
+  display: flex;
+  gap: 1rem;
+  width: 95%;
+  max-width: 1800px;
+  margin: 0 auto;
+}
+
+.rerun-overview-row .rerun-cell {
+  flex: 1;
+  position: relative;
+  min-height: clamp(360px, 70vh, 900px);
+  height: clamp(360px, 70vh, 900px);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #1a1a1a;
+}
+
+.rerun-overview-row .rerun-cell canvas {
+  position: absolute !important;
+  left: 0;
+  top: 0;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  display: block !important;
+}
+
+@media screen and (max-width: 1023px) {
+  .reasoning-row,
+  .reasoning-row.reasoning-row-2 {
+    grid-template-columns: 1fr;
+  }
+
+  .reasoning-viz-tile {
+    min-height: 42vh;
+    height: 42vh;
+  }
+
+  .rerun-overview-row {
+    flex-direction: column;
+  }
+
+  .rerun-overview-row .rerun-cell {
+    min-height: 50vh;
+    height: 50vh;
+  }
+}
