@@ -222,6 +222,11 @@
       <div class="content is-size-6-mobile" style="font-size: clamp(0.9rem, 1.3vw, 1.1rem); width: 90%; max-width: 800px; text-align: center; margin: 0 auto;">
         Spatiotemporal reasoning is a fundamental capability for artificial intelligence (AI) in soft tissue surgery, paving the way for intelligent assistive systems and autonomous robotics. While 2D vision-language models show increasing promise at understanding surgical video, the spatial complexity of surgical scenes suggests that reasoning systems may benefit from explicit 4D representations. Here, we propose a framework for equipping surgical agents with spatiotemporal tools based on an explicit 4D representation, enabling AI systems to ground their natural language reasoning in both time and 3D space. Leveraging models for point tracking, depth, and segmentation, we develop a coherent 4D model with spatiotemporally consistent tool and tissue semantics. A Multimodal Large Language Model (MLLM) then acts as an agent on tools derived from the explicit 4D representation (e.g., trajectories) without any fine-tuning. We evaluate our method on a new dataset of 134 clinically relevant questions and find that the combination of a general purpose reasoning backbone and our 4D representation significantly improves spatiotemporal understanding and allows for 4D grounding. We demonstrate that spatiotemporal intelligence can be “assembled” from 2D MLLMs and 3D computer vision models without additional training.
       </div>
+      <div style="text-align: center; margin-top: 2rem;">
+        <video playsinline autoplay muted loop controls preload="metadata" style="max-width: min(90%, 800px); width: 100%; height: auto;">
+          <source src="./project_page/assets/videos/4D%20Reasoning%20Video.mp4" type="video/mp4">
+        </video>
+      </div>
     </div>
 
    
