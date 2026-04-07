@@ -73,11 +73,17 @@ def convert_streaming_outputs(
             if not line:
                 continue
             values = list(map(float, line.split()))
-            if len(values) != 12:
+            if len(values) == 16:
+                # DA3-Streaming outputs 4x4 c2w matrices, convert to 3x4 w2c
+                c2w = np.array(values, dtype=np.float32).reshape(4, 4)
+                w2c = np.linalg.inv(c2w)
+                extrinsic = w2c[:3, :4]
+            elif len(values) == 12:
+                extrinsic = np.array(values, dtype=np.float32).reshape(3, 4)
+            else:
                 raise ValueError(
-                    f"Expected 12 values per line in camera_poses.txt, got {len(values)}"
+                    f"Expected 12 or 16 values per line in camera_poses.txt, got {len(values)}"
                 )
-            extrinsic = np.array(values, dtype=np.float32).reshape(3, 4)
             extrinsics_list.append(extrinsic)
 
     intrinsics_list = []
@@ -201,7 +207,13 @@ def extract_geometry_streaming(clip: DictConfig, cfg: DictConfig):
             str(temp_output),
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=DA3_STREAMING_SCRIPT.parent,
+        )
 
         if result.returncode != 0:
             logger.error(f"DA3-Streaming stderr: {result.stderr}")
@@ -317,7 +329,9 @@ def main(cfg: DictConfig):
         Path(config_dump).parent.mkdir(parents=True, exist_ok=True)
         OmegaConf.save(cfg, config_dump)
 
-    logger.info("Using DA3-Streaming for all clips (no standard model loading)")
+    # model = DepthAnything3.from_pretrained('depth-anything/DA3NESTED-GIANT-LARGE')
+    model = DepthAnything3.from_pretrained("depth-anything/DA3-LARGE-1.1")
+    model = model.to('cuda:0')
 
     for clip in tqdm(cfg.clips, desc="Processing clips", unit="clip"):
         extract_geometry(clip, cfg, model=None)

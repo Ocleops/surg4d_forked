@@ -9,8 +9,8 @@ da3_edge_gradient_threshold: 0.1
 da3_vit_patch_size: 14
 
 # DA3-Streaming settings for processing long videos (>80 frames)
-da3_use_streaming: true
-da3_streaming_chunk_size: 120
+da3_use_streaming: false
+da3_streaming_chunk_size: 60
 da3_streaming_overlap: 30
 da3_streaming_similarity_thresh: 0.85
 da3_streaming_save_depth_conf: true
