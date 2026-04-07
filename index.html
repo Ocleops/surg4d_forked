@@ -14,7 +14,6 @@
 
   <link rel="icon" href="./project_page/chart-bubble.svg" type="image/svg+xml">
 
-  <link href="./project_page/css" rel="stylesheet">
 
   <!-- <link href="https://cdn.jsdelivr.net/npm/modern-normalize@3.0.1/modern-normalize.min.css" rel="stylesheet" /> -->
   <link href="./project_page/tabler-icons-outline.min.css" rel="stylesheet">
@@ -30,6 +29,9 @@
   <style>
     @media screen and (min-width: 1024px) {
       #mobile-top-bar {
+        display: none !important;
+      }
+      #mobile-desktop-note {
         display: none !important;
       }
     }
@@ -65,6 +67,9 @@
       #mobile-top-bar a:active {
         color: #ffffff !important;
         text-decoration: underline !important;
+      }
+      #mobile-desktop-note {
+        display: block !important;
       }
     }
   </style>
@@ -260,6 +265,12 @@
       </div>
 
       <br>
+
+      <div id="mobile-desktop-note" style="display: none; width: min(92%, 980px); margin: 0 auto 1.25rem auto; border: 2px solid rgba(255, 200, 90, 0.7); border-radius: 12px; background: rgba(255, 190, 70, 0.12); padding: 0.9rem 1.1rem; text-align: center;">
+        <p style="margin: 0; color: #ffe9b6; font-size: clamp(1rem, 1.8vw, 1.25rem); font-weight: 700; line-height: 1.4;">
+          Best viewed on desktop: Integration of interactive 4D visualizations is limited on mobile.
+        </p>
+      </div>
 
       <div class="content is-6 is-size-6-mobile reasoning-section-lead">
         We evaluate on 134 clinically motivated queries that require spatiotemporal reasoning over tool–tissue interaction. In particular, we want to understand how tissue is manipulated as the decision-making on grasping points, retraction directions, and dissection locations is a key indicator for surgical intelligence. Tasks are <em>spatial</em> (where an interaction occurs in 3D at a timestep), <em>temporal</em> (when a query holds), and <em>directional</em> (how motion evolves).
@@ -654,7 +665,6 @@ So the direction vector should be {&quot;x&quot;: 1, &quot;y&quot;: -1, &quot;z&
 
   </div>
 
-    <script src="./project_page/script.js"></script>
     <script>
     // Nerfies-style: window-based scroll tracking for active nav dot + smooth anchors
     (function() {

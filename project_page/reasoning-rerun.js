@@ -14,6 +14,9 @@ const baseOpts = { hide_welcome_screen: true, allow_fullscreen: true };
  */
 const hidePanelsDefault = ["blueprint", "selection", "top"];
 const hidePanelsInteractive = ["blueprint", "selection", "top"];
+const isMobileTapLoadMode =
+  window.matchMedia("(max-width: 1023px)").matches ||
+  /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || "");
 
 function panelsToHide(host) {
   return host.closest(".rerun-overview-row") ? hidePanelsInteractive : hidePanelsDefault;
@@ -47,7 +50,7 @@ const resizeObservers = new WeakMap();
 const hideDebounceTimers = new WeakMap();
 const unloadTimers = new WeakMap();
 
-const OFFSCREEN_UNLOAD_MS = 8000;
+const OFFSCREEN_UNLOAD_MS = 3000;
 
 let queue = Promise.resolve();
 
@@ -134,6 +137,7 @@ function destroyHostViewer(host) {
   }
 
   host.textContent = "";
+  showTapToLoadOverlay(host);
 }
 
 function scheduleOffscreenUnload(host) {
@@ -145,6 +149,41 @@ function scheduleOffscreenUnload(host) {
   unloadTimers.set(host, t);
 }
 
+function showTapToLoadOverlay(host) {
+  if (!isMobileTapLoadMode) return;
+  if (viewers.has(host) || starting.has(host)) return;
+  if (host.querySelector('[data-rrd-tap-overlay="1"]')) return;
+
+  host.textContent = "";
+  if (!host.style.position) {
+    host.style.position = "relative";
+  }
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.setAttribute("data-rrd-tap-overlay", "1");
+  button.textContent = "Tap to load 4D viewer";
+  button.style.position = "absolute";
+  button.style.inset = "0";
+  button.style.width = "100%";
+  button.style.height = "100%";
+  button.style.border = "1px solid rgba(255,255,255,0.2)";
+  button.style.borderRadius = "10px";
+  button.style.background = "rgba(0,0,0,0.55)";
+  button.style.color = "#fff";
+  button.style.font = "600 0.95rem system-ui, -apple-system, sans-serif";
+  button.style.letterSpacing = "0.01em";
+  button.style.cursor = "pointer";
+
+  button.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    scheduleStart(host, true);
+  });
+
+  host.appendChild(button);
+}
+
 async function waitForLayout(host) {
   for (let i = 0; i < 5; i++) {
     const r = host.getBoundingClientRect();
@@ -153,19 +192,24 @@ async function waitForLayout(host) {
   }
 }
 
-function scheduleStart(host) {
+function scheduleStart(host, forceStart = false) {
   queue = queue.then(async () => {
     if (!host.isConnected || viewers.has(host) || starting.has(host)) return;
 
     const rect = host.getBoundingClientRect();
     const inViewport = rect.bottom > 0 && rect.top < window.innerHeight;
-    if (!inViewport) return;
+    if (!inViewport && !forceStart) return;
 
     const rawUrl = host.getAttribute("data-rrd-url");
     if (!rawUrl) return;
     // Newer web-viewer versions can mis-handle "./..." inputs; resolve explicitly.
     const url = new URL(rawUrl, window.location.href).href;
     starting.add(host);
+
+    const overlay = host.querySelector('[data-rrd-tap-overlay="1"]');
+    if (overlay) {
+      overlay.remove();
+    }
 
     try {
       await waitForLayout(host);
@@ -194,6 +238,7 @@ function scheduleStart(host) {
       resizeObservers.set(host, ro);
     } catch (e) {
       console.warn("Rerun viewer failed:", host.id || host.className, e);
+      showTapToLoadOverlay(host);
     } finally {
       starting.delete(host);
     }
@@ -206,7 +251,9 @@ const io = new IntersectionObserver(
       const host = ent.target;
       if (ent.isIntersecting) {
         clearUnloadTimer(host);
-        scheduleStart(host);
+        if (!isMobileTapLoadMode) {
+          scheduleStart(host);
+        }
       } else {
         scheduleOffscreenUnload(host);
       }
@@ -216,5 +263,8 @@ const io = new IntersectionObserver(
 );
 
 for (const host of document.querySelectorAll("[data-rrd-url]")) {
+  if (isMobileTapLoadMode) {
+    showTapToLoadOverlay(host);
+  }
   io.observe(host);
 }
