@@ -1,6 +1,7 @@
 from pathlib import Path
 from PIL import Image
 import numpy as np
+import os
 import random
 import shutil
 import subprocess
@@ -18,7 +19,6 @@ import re
 from depth_anything_3.api import DepthAnything3
 
 from utils.da3_utils import filter_prediction_edge_artifacts
-import os
 
 REPO_ROOT = Path(__file__).resolve().parent
 DA3_STREAMING_SCRIPT = (
@@ -31,6 +31,9 @@ DA3_STREAMING_BASE_CONFIG = (
     / "da3_streaming"
     / "configs"
     / "base_config.yaml"
+)
+DA3_STREAMING_WEIGHTS_DIR = (
+    REPO_ROOT / "submodules" / "depth-anything-3" / "da3_streaming" / "scripts" / "weights"
 )
 
 
@@ -188,6 +191,13 @@ def extract_geometry_streaming(clip: DictConfig, cfg: DictConfig):
             cfg.extract_geometry.da3_streaming_save_depth_conf
         )
 
+        # Set weights paths dynamically based on repo location
+        streaming_config["Weights"] = {
+            "DA3": str(DA3_STREAMING_WEIGHTS_DIR / "model.safetensors"),
+            "DA3_CONFIG": str(DA3_STREAMING_WEIGHTS_DIR / "config.json"),
+            "SALAD": str(DA3_STREAMING_WEIGHTS_DIR / "dino_salad.ckpt"),
+        }
+
         with open(temp_config, "w") as f:
             yaml.safe_dump(streaming_config, f)
 
@@ -208,15 +218,15 @@ def extract_geometry_streaming(clip: DictConfig, cfg: DictConfig):
             str(temp_output),
         ]
 
-        # result = subprocess.run(cmd, capture_output=True, text=True)
+        # Pass environment variables to subprocess (including CUDA_VISIBLE_DEVICES)
         env = os.environ.copy()
 
         result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        cwd=DA3_STREAMING_SCRIPT.parent,
-        env=env,
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=DA3_STREAMING_SCRIPT.parent,
+            env=env,
         )
 
         if result.returncode != 0:
@@ -333,9 +343,7 @@ def main(cfg: DictConfig):
         Path(config_dump).parent.mkdir(parents=True, exist_ok=True)
         OmegaConf.save(cfg, config_dump)
 
-    # model = DepthAnything3.from_pretrained('depth-anything/DA3NESTED-GIANT-LARGE')
-    model = DepthAnything3.from_pretrained("depth-anything/DA3-LARGE-1.1")
-    model = model.to('cuda:0')
+    logger.info("Using DA3-Streaming for all clips (no standard model loading)")
 
     for clip in tqdm(cfg.clips, desc="Processing clips", unit="clip"):
         extract_geometry(clip, cfg, model=None)

@@ -490,6 +490,11 @@ def draw_masks(
         overlap_scores = (
             inst_bool_masks[:, np.newaxis] & sem_bool_masks[np.newaxis]
         ).sum(axis=(2, 3))
+
+        if overlap_scores.size == 0 or overlap_scores.shape[0] == 0 or overlap_scores.shape[1] == 0:
+            log.debug("No instances or semantic classes detected, returning original image")
+            return (image * 255).astype(np.uint8)
+
         dominant_semantic_idx = np.argmax(overlap_scores, axis=1)
 
         if colors is None:

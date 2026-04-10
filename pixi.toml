@@ -41,6 +41,18 @@ install-cotracker = "uv pip install git+https://github.com/facebookresearch/co-t
 # Install Depth Anything V3 from submodule
 install-depth-anything-3 = "cd submodules/depth-anything-3 && uv pip install -e . && cd ../.."
 
+# Install DA3-Streaming dependencies
+install-da3-streaming-deps = """
+uv pip install -r submodules/depth-anything-3/da3_streaming/requirements.txt
+"""
+
+# Download DA3-Streaming model weights
+download-da3-streaming-weights = """
+cd submodules/depth-anything-3/da3_streaming/scripts && \
+bash download_weights.sh && \
+cd ../../../..
+"""
+
 download-cotracker-checkpoint = """
 mkdir -p checkpoints && \
 wget -O checkpoints/cotracker3_scaled_offline.pth https://huggingface.co/facebook/cotracker3/resolve/main/scaled_offline.pth || \
@@ -83,7 +95,7 @@ install-python-deps = """
 uv pip install \
   hydra-core==1.3.2 \
   qwen-vl-utils==0.0.14 \
-  rerun-sdk==0.30.2 \
+  rerun-sdk==0.23.1 \
   accelerate==1.12.0 \
   transformers==4.57.1 \
   notebook==7.5.3 \
@@ -93,7 +105,7 @@ uv pip install \
 
 
 # Full setup - follows dependency order
-setup = { depends-on = ["init-submodules", "install-pytorch", "install-vllm-deps", "install-vllm", "install-cotracker", "install-depth-anything-3", "download-cotracker-checkpoint", "install-sam2", "download-sam2-checkpoint", "install-sds-playground", "install-python-deps"] }
+setup = { depends-on = ["init-submodules", "install-pytorch", "install-vllm-deps", "install-vllm", "install-cotracker", "install-depth-anything-3", "install-da3-streaming-deps", "download-da3-streaming-weights", "download-cotracker-checkpoint", "install-sam2", "download-sam2-checkpoint", "install-sds-playground", "install-python-deps"] }
 
 # Test installation
 test-install = """
