@@ -18,6 +18,7 @@ import re
 from depth_anything_3.api import DepthAnything3
 
 from utils.da3_utils import filter_prediction_edge_artifacts
+import os
 
 REPO_ROOT = Path(__file__).resolve().parent
 DA3_STREAMING_SCRIPT = (
@@ -208,11 +209,14 @@ def extract_geometry_streaming(clip: DictConfig, cfg: DictConfig):
         ]
 
         # result = subprocess.run(cmd, capture_output=True, text=True)
+        env = os.environ.copy()
+
         result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            cwd=DA3_STREAMING_SCRIPT.parent,
+        cmd,
+        capture_output=True,
+        text=True,
+        cwd=DA3_STREAMING_SCRIPT.parent,
+        env=env,
         )
 
         if result.returncode != 0:
